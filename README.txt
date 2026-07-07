@@ -1,3 +1,8 @@
+
+
+
+Last release here: https://github.com/xxmaru10/Expanded-Character-Creator/releases/tag/release
+
 ================================================================
  Custom Body Parts  -  a mod for The RPG Engine
  v0.1.0
