@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>CustomPartsMod</AssemblyName>
+    <Product>CustomPartsMod</Product>
+    <Version>0.1.0</Version>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <RootNamespace>CustomPartsMod</RootNamespace>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AssemblySearchPaths>$(AssemblySearchPaths);{HintPathFromItem}</AssemblySearchPaths>
+    <!-- Path to the game's Managed folder. Override with: dotnet build -p:GameManaged="..." -->
+    <GameManaged Condition="'$(GameManaged)' == ''">D:\SteamLibrary\steamapps\common\The RPG Engine\The_RPG_Engine_Data\Managed</GameManaged>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- net472 reference assemblies so the build works without Visual Studio. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Loader + patching (from BepInEx 5.4.23.2). Provided by BepInEx at runtime; not copied. -->
+    <Reference Include="BepInEx"> <HintPath>..\lib\BepInEx.dll</HintPath> <Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>..\lib\0Harmony.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Game + Unity assemblies referenced in place, never copied to output. -->
+    <Reference Include="RpgEngine">          <HintPath>$(GameManaged)\RpgEngine.dll</HintPath>          <Private>false</Private></Reference>
+    <Reference Include="UnityUtils">         <HintPath>$(GameManaged)\UnityUtils.dll</HintPath>         <Private>false</Private></Reference>
+    <Reference Include="SlickUi">            <HintPath>$(GameManaged)\SlickUi.dll</HintPath>            <Private>false</Private></Reference>
+    <Reference Include="UnityEngine">        <HintPath>$(GameManaged)\UnityEngine.dll</HintPath>        <Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameManaged)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UIModule"><HintPath>$(GameManaged)\UnityEngine.UIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(GameManaged)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(GameManaged)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.JSONSerializeModule"><HintPath>$(GameManaged)\UnityEngine.JSONSerializeModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.ImageConversionModule"><HintPath>$(GameManaged)\UnityEngine.ImageConversionModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SimpleFileBrowser.Runtime"><HintPath>$(GameManaged)\SimpleFileBrowser.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI">     <HintPath>$(GameManaged)\UnityEngine.UI.dll</HintPath>     <Private>false</Private></Reference>
+    <Reference Include="Unity.TextMeshPro">  <HintPath>$(GameManaged)\Unity.TextMeshPro.dll</HintPath>  <Private>false</Private></Reference>
+  </ItemGroup>
+
+</Project>
