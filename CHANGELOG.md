@@ -5,6 +5,34 @@ Loader: BepInEx 5.4.23.2 (Mono x64) + HarmonyX. Alvo: Unity 2021.3.30 / `net472`
 
 ---
 
+## Iteração 29 — Idioma automático (PT/EN) + lado Esquerda/Direita também em Mãos
+- **Idioma automático:** o mod agora fala o idioma do jogo. `Loc.T` (`Loc.cs`) traduz PT→EN lendo
+  `PlayerPrefs["Language"]` ao vivo (`"pt"` = português; qualquer outro = inglês), aplicada dentro dos
+  funis de UI (`UiFactory.Label/TextButton`, `Compat.ShowSuccess/ShowError`, `PanelUi.SetButtonLabel`),
+  então quase todo texto do mod localiza sem mudar cada call-site. Botões PERSISTENTES (Importar
+  Parte/Pasta, Aleatório, Sapato, Só custom) são criados uma única vez e ficavam presos no idioma da
+  criação; `LocButtons.cs` resolve isso assinando `Translator.onLanguageUpdated` da engine e
+  re-traduzindo-os ao vivo quando o idioma muda em runtime.
+- **Esquerda/Direita generalizado para Mãos:** o sistema de lado (antes só Pés/Sapato, `FootSide`) virou
+  `SidedCategory` — reconhece **Pés+Sapato** (kind `Feet`) e **Mãos** (kind `Hands`), cada um com seu
+  próprio slot esquerda/direita (`legLowerL/R`, `handL/R`) e seu próprio "último lado lembrado"
+  (`ScaleStore.GetLastSideLeft/SetLastSideLeft`, chave por kind — escolher lado em Mãos não afeta o
+  lado lembrado de Pés). O prompt de import individual (`FootSidePrompt`→`SidePrompt`) e o toggle do
+  Importar Pasta (`MassImportConfig`) usam o mesmo `SidedCategory` e mostram o título/pergunta certos
+  ("Lado do pé" vs "Lado da mão").
+- **Cuidado corrigido:** o botão "Sapato" só deve aparecer na categoria de Pés, não em Mãos (que também
+  é "sided" agora) — `ShoeButton.UpdateVisibility` checa `SidedCategory.KindOf(category) == Kind.Feet`
+  explicitamente, não mais o `AppliesTo` genérico.
+- **Arquivos novos:** `Loc.cs`, `LocButtons.cs`, `SidedCategory.cs` (substitui `FootSide.cs`),
+  `SidePrompt.cs` (substitui `FootSidePrompt.cs`). **Alterados:** `UiFactory.cs`, `Compat.cs`,
+  `PanelUi.cs`, `ScaleSession.cs`, `CustomFilterButton.cs`, `RandomPanel.cs`, `ImportButton.cs`,
+  `MassImportButton.cs`, `RandomButton.cs`, `ShoeButton.cs`, `ShoeCategory.cs`, `ImportFlow.cs`,
+  `MassImportFlow.cs`, `MassImportConfig.cs`, `ScaleStore.cs`.
+- **README.txt reescrito:** inglês primeiro (seção completa) + português depois (seção completa),
+  ambos com instalação; instrução de build documenta a pasta `lib\` (BepInEx/0Harmony, baixados à
+  parte, fora do Git) e como reempacotar `dist\CustomPartsMod-v0.1.0.zip`.
+- Build 0/0 → implantado em `BepInEx/plugins/` + `dist/package` + zip re-empacotado.
+
 ## Iteração 28 — Categorias "Pés" e "Sapato" (sapato aditivo sobre os pés)
 - **O quê:** duas novas categorias sintéticas de peça no criador, no mesmo estilo de "Olhos": um botão
   **"Pés"** (peça de pé que **substitui** o slot da perna) e um botão **"Sapato"** (subcategoria que

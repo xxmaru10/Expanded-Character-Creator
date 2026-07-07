@@ -22,7 +22,7 @@ namespace CustomPartsMod
         public Vector3 Offset;         // world-unit position offset
         public string Gender;          // "", "Feminine", "Masculine" (P3)
         public string Channel;         // paint channel id (P2)
-        public bool FootSideLeft;      // feet/shoe categories: whole folder goes to the left (else right) foot
+        public bool SideLeft;          // sided categories (feet/shoe, hands): whole folder goes to the left side
     }
 
     /// <summary>
@@ -51,7 +51,7 @@ namespace CustomPartsMod
             }
 
             RiggedAttachType baseSlot = CategoryMap.ToSocket(category);
-            bool footCategory = FootSide.AppliesTo(category); // feet/shoe: the panel offers a left/right choice
+            var kind = SidedCategory.KindOf(category); // feet/shoe or hands: the panel offers a left/right choice
 
             // Open the conventions panel; the actual folder pick + import happens on confirm.
             var canvas = creator.createNew != null ? creator.createNew.GetComponentInParent<Canvas>() : null;
@@ -62,10 +62,10 @@ namespace CustomPartsMod
             MassImportConfig.Open(buttonTemplate, inputTemplate, canvasT, category, settings =>
             {
                 RiggedAttachType slot = baseSlot;
-                if (footCategory)
+                if (kind != SidedCategory.Kind.None)
                 {
-                    ScaleStore.SetLastFootSideLeft(settings.FootSideLeft); // remember for next time
-                    slot = settings.FootSideLeft ? RiggedAttachType.legLowerL : RiggedAttachType.legLowerR;
+                    ScaleStore.SetLastSideLeft(SidedCategory.StoreKey(kind), settings.SideLeft); // remember for next time
+                    slot = settings.SideLeft ? SidedCategory.LeftSlot(kind) : SidedCategory.RightSlot(kind);
                 }
                 RunImport(category, slot, settings).StartCoroutine();
             });

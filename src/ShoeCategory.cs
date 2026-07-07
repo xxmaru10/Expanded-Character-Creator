@@ -8,7 +8,7 @@ namespace CustomPartsMod
     /// Feet category (it already accepts custom imports), so there is no synthetic feet category; only the
     /// shoe one is invented. Its unique savePath prefix under "CustomParts" is used nowhere native. Shoes
     /// attach ADDITIVELY over the lower-leg socket (stack on top of the foot — see <see cref="AccessoryMap"/>),
-    /// and left/right is chosen at import time (<see cref="FootSide"/>) → legLowerL / legLowerR.
+    /// and left/right is chosen at import time (<see cref="SidedCategory"/>) → legLowerL / legLowerR.
     /// </summary>
     internal static class ShoeCategory
     {

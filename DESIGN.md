@@ -4,9 +4,9 @@ language: pt-BR
 status: Fase 1 + TODAS as features do ROADMAP concluídas (P0–P7, P9–P15; P8 removido). Restam só
   polimentos opcionais (gizmo de setas coloridas sobre P11, sub-slots de acessório sobre P14,
   isolar a peça na miniatura). Ver ROADMAP.md/CHANGELOG.md.
-last_updated: 2026-07-07 (Iteração 28 — categorias sintéticas "Pés" (substitui) e "Sapato" (aditivo
-  sobre os pés), no estilo de "Olhos"; injetor de botão de categoria generalizado em CategoryTabButton
-  + CustomCategories. CHANGELOG/ROADMAP são a fonte da verdade.)
+last_updated: 2026-07-07 (Iteração 29 — idioma automático PT/EN (Loc/LocButtons) e lado
+  Esquerda/Direita generalizado para Mãos além de Pés/Sapato (SidedCategory/SidePrompt).
+  CHANGELOG/ROADMAP são a fonte da verdade.)
 fonte_da_verdade:
   historico: CHANGELOG.md          # o que já foi feito, iteração por iteração
   futuro: ROADMAP.md               # o que falta (P0–P11) com nota de viabilidade
@@ -88,11 +88,16 @@ Total ~1.5k linhas. "Âncora na engine" = a classe/membro do jogo que o arquivo 
 | `AdditiveParts.cs` | Guarda a intenção de peças aditivas (olhos) e re-aplica as removidas por colateral. | `PickupableCharacter.AddPart`, `attachedItems` |
 | `ChannelMap.cs` | P2: mapeia categoria (`savePath`)→canal de cor do personagem (`_Color_*`), independente de idioma. | `Colors.Part.GetColorId` (ids validados 1:1) |
 | `EyesCategory.cs` | P2 Fatia 3: define a categoria sintética "Olhos" (`savePath` único + segmento `eyes`). | — (constante) |
-| `FeetCategory.cs` | Categorias sintéticas "Pés" (`feet`, substitui) e "Sapato" (`shoes`, aditivo) + `CustomCategory.IsSynthetic`. | — (constante) |
-| `EyeIcon.cs` / `FootIcon.cs` / `ShoeIcon.cs` | Ícones brancos desenhados em código (Texture2D→Sprite) dos botões de categoria. | UnityEngine (`Texture2D`/`Sprite`) |
-| `CategoryTabButton.cs` | Injetor genérico de botão de categoria sintética (clona nativo, troca ícone, `SetPathFilter`, coordena o sublinhado). | `BuildTabsWithPathButtons.SetPathFilter`, `SimpleTabSystem`, `createNew` |
-| `CustomCategories.cs` | Declara os botões Olhos/Pés/Sapato e faz `EnsureAll` no criador. | — (coordenador) |
-| `UiFactory.cs` | Helpers de UI (clonar botão texto/ícone, rótulo TMP com fonte da cena, input fields). | TMP / Unity UI |
+| `ShoeCategory.cs` | Categoria sintética "Sapato" (`shoes`, aditivo) + `CustomCategory.IsSynthetic`. "Pés" é a categoria nativa Feet (sem sintético próprio). | — (constante) |
+| `EyeIcon.cs` / `ShoeIcon.cs` | Ícones brancos desenhados em código (Texture2D→Sprite) dos botões de categoria. | UnityEngine (`Texture2D`/`Sprite`) |
+| `CategoryTabButton.cs` | Injetor de sub-aba de categoria sintética (clona a sub-aba nativa mais próxima, troca ícone, `SetPathFilter`, coordena o sublinhado). Usado só por Olhos — a fileira de categorias do topo é um `BasicTabSystem` script-driven e NÃO pode ser clonada (ver Regras §4). | `BuildTabsWithPathButtons.SetPathFilter`, `SimpleTabSystem`, `createNew` |
+| `CustomCategories.cs` | Declara o botão Olhos (sub-aba) e faz `EnsureAll` no criador. | — (coordenador) |
+| `ShoeButton.cs` | Botão "Sapato" independente (não clonado na fileira nativa); visível só quando a categoria aberta é Pés/Sapato via postfix em `SetPathFilter`. | `BuildTabsWithPathButtons.SetPathFilter` |
+| `SidedCategory.cs` | Identifica categorias com lado (Pés+Sapato, Mãos) e mapeia cada uma pro par de slots esquerda/direita. | `RiggedAttachType.legLowerL/R`, `handL/R` |
+| `SidePrompt.cs` | Painel "Esquerda/Direita" mostrado antes do import individual numa categoria com lado. | — (painel próprio) |
+| `Loc.cs` | Tradução PT→EN lida de `PlayerPrefs["Language"]`; usada dentro dos funis de UI. | `PlayerPrefs.GetString("Language")` |
+| `LocButtons.cs` | Re-traduz ao vivo os botões PERSISTENTES (criados uma vez) quando o idioma muda em runtime. | `UnityUtils.Translator.onLanguageUpdated` |
+| `UiFactory.cs` | Helpers de UI (clonar botão texto/ícone, rótulo TMP com fonte da cena, input fields); aplica `Loc.T` a todo texto. | TMP / Unity UI |
 
 ## Carregar por contexto (tarefa → o que abrir)
 

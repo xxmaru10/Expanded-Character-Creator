@@ -37,18 +37,20 @@ namespace CustomPartsMod
 
             RiggedAttachType slot = CategoryMap.ToSocket(category);
 
-            // Feet/shoe: ask left or right first (the engine keeps them as separate lower-leg sockets),
-            // defaulting to the last-used side, then import with the chosen slot. Other categories go
-            // straight to the file browser.
-            if (FootSide.AppliesTo(category))
+            // Sided categories (feet/shoe, hands): ask left or right first (the engine keeps them as
+            // separate sockets), defaulting to that kind's last-used side, then import with the chosen
+            // slot. Other categories go straight to the file browser.
+            var kind = SidedCategory.KindOf(category);
+            if (kind != SidedCategory.Kind.None)
             {
                 var canvas = creator.createNew != null ? creator.createNew.GetComponentInParent<Canvas>() : null;
                 Transform canvasT = canvas != null ? canvas.rootCanvas.transform : creator.transform;
                 GameObject buttonTemplate = creator.createNew != null ? creator.createNew.gameObject : null;
-                FootSidePrompt.Open(buttonTemplate, canvasT, ScaleStore.GetLastFootSideLeft(), left =>
+                string storeKey = SidedCategory.StoreKey(kind);
+                SidePrompt.Open(buttonTemplate, canvasT, kind, ScaleStore.GetLastSideLeft(storeKey), left =>
                 {
-                    ScaleStore.SetLastFootSideLeft(left);
-                    RiggedAttachType sideSlot = left ? RiggedAttachType.legLowerL : RiggedAttachType.legLowerR;
+                    ScaleStore.SetLastSideLeft(storeKey, left);
+                    RiggedAttachType sideSlot = left ? SidedCategory.LeftSlot(kind) : SidedCategory.RightSlot(kind);
                     MeshImporter.LoadMesh(rpg => OnMeshLoaded(rpg, category, sideSlot), new[] { ".obj" });
                 });
                 return;

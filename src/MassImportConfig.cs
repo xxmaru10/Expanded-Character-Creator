@@ -25,12 +25,12 @@ namespace CustomPartsMod
         private UiInputField _rxField, _ryField, _rzField;
         private UiInputField _xField, _yField, _zField;
         private UiButton _genderBtn, _channelBtn;
-        private UiButton _footBtn;
+        private UiButton _sideBtn;
 
         private string _gender = "";
         private string _channel = ChannelMap.Primary;
-        private bool _footApplies;  // feet/shoe category: show the left/right choice
-        private bool _footLeft;     // chosen side (true = left / legLowerL)
+        private SidedCategory.Kind _sideKind; // None when the category isn't sided (feet/shoe or hands)
+        private bool _sideLeft;               // chosen side (true = left)
 
         // Kept in sync with ScaleSession's cycle lists (the two panels offer the same choices).
         private static readonly string[] GenderTags = { "", "Feminine", "Masculine" };
@@ -93,11 +93,12 @@ namespace CustomPartsMod
             }
             _channel = ChannelMap.ForCategory(category);
 
-            // Feet/shoe: the whole folder goes to one side; seed the toggle from the last-used side.
-            _footApplies = FootSide.AppliesTo(category);
-            _footLeft = _footApplies && ScaleStore.GetLastFootSideLeft();
+            // Sided category (feet/shoe, hands): the whole folder goes to one side; seed the toggle
+            // from that kind's last-used side.
+            _sideKind = SidedCategory.KindOf(category);
+            _sideLeft = _sideKind != SidedCategory.Kind.None && ScaleStore.GetLastSideLeft(SidedCategory.StoreKey(_sideKind));
 
-            float height = _footApplies ? 392f : 348f; // extra row for the left/right toggle
+            float height = _sideKind != SidedCategory.Kind.None ? 392f : 348f; // extra row for the left/right toggle
             _panelRt = PanelUi.BuildShell(panelGo, canvas, buttonTemplate,
                 new Vector2(480f, height), _lastPanelPos, "Importar pasta — convenções");
 
@@ -127,11 +128,11 @@ namespace CustomPartsMod
             // Gender filter: Ambos / Feminino / Masculino — tags every imported part accordingly (P3).
             _genderBtn = PanelUi.Button(buttonTemplate, panelGo.transform, GenderLabelFor(_gender), new Vector2(12f, -246f), new Vector2(456f, 34f), CycleGender);
 
-            // Feet/shoe only: which foot the whole folder attaches to (legLowerL / legLowerR).
+            // Sided categories only: which side the whole folder attaches to.
             float y = -292f;
-            if (_footApplies)
+            if (_sideKind != SidedCategory.Kind.None)
             {
-                _footBtn = PanelUi.Button(buttonTemplate, panelGo.transform, FootSideLabel(_footLeft), new Vector2(12f, y), new Vector2(456f, 34f), CycleFootSide);
+                _sideBtn = PanelUi.Button(buttonTemplate, panelGo.transform, SideLabel(_sideLeft), new Vector2(12f, y), new Vector2(456f, 34f), CycleSide);
                 y -= 44f;
             }
 
@@ -139,13 +140,13 @@ namespace CustomPartsMod
             PanelUi.Button(buttonTemplate, panelGo.transform, "Cancelar", new Vector2(322f, y), new Vector2(146f, 40f), () => Close());
         }
 
-        private void CycleFootSide()
+        private void CycleSide()
         {
-            _footLeft = !_footLeft;
-            PanelUi.SetButtonLabel(_footBtn, FootSideLabel(_footLeft));
+            _sideLeft = !_sideLeft;
+            PanelUi.SetButtonLabel(_sideBtn, SideLabel(_sideLeft));
         }
 
-        private static string FootSideLabel(bool left) => left ? "Lado: Esquerda ◀" : "Lado: Direita ▶";
+        private static string SideLabel(bool left) => left ? "Lado: Esquerda ◀" : "Lado: Direita ▶";
 
         private void CycleGender()
         {
@@ -173,7 +174,7 @@ namespace CustomPartsMod
                 Offset = new Vector3(ParseOr(_xField, 0f), ParseOr(_yField, 0f), ParseOr(_zField, 0f)),
                 Gender = _gender,
                 Channel = _channel,
-                FootSideLeft = _footLeft,
+                SideLeft = _sideLeft,
             };
 
             var cb = _onConfirm;

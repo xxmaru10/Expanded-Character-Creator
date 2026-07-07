@@ -13,7 +13,7 @@ namespace CustomPartsMod
     /// a giant white overlay), so instead this is a standalone mod button — built the proven way (clone the
     /// creator's <c>createNew</c> text button, like <see cref="ImportButton"/>) — that appears ONLY while the
     /// Feet category is open. Clicking it filters the item list to the synthetic shoe category
-    /// (<see cref="ShoeCategory"/>); imports there stack additively on the chosen foot (<see cref="FootSide"/>).
+    /// (<see cref="ShoeCategory"/>); imports there stack additively on the chosen foot (<see cref="SidedCategory"/>).
     /// </summary>
     internal static class ShoeButton
     {
@@ -55,12 +55,11 @@ namespace CustomPartsMod
         }
 
         /// <summary>Visible only when the open category is a feet or shoe one (so it reads as a sub-option
-        /// of Pés). <see cref="FootSide.AppliesTo"/> already matches both the native feet path and the
-        /// synthetic shoe path.</summary>
+        /// of Pés) — NOT for hands, which are also a sided category but unrelated to footwear.</summary>
         internal static void UpdateVisibility(string[] category)
         {
             if (_button == null) return;
-            _button.gameObject.SetActive(FootSide.AppliesTo(category));
+            _button.gameObject.SetActive(SidedCategory.KindOf(category) == SidedCategory.Kind.Feet);
         }
     }
 

@@ -45,7 +45,6 @@ namespace CustomPartsMod
             { "Só custom: NÃO", "Custom only: NO" },
 
             // --- panel titles ---
-            { "Lado do pé", "Foot side" },
             { "Importar pasta — convenções", "Import folder — conventions" },
             { "Aleatório (só peças custom)", "Random (custom parts only)" },
 
@@ -62,8 +61,11 @@ namespace CustomPartsMod
             { "Escolher pasta e importar", "Pick folder & import" },
             { "Cancelar", "Cancel" },
 
-            // --- FootSide prompt / mass-import side toggle ---
+            // --- SidePrompt / mass-import side toggle (feet & hands) ---
+            { "Lado do pé", "Foot side" },
+            { "Lado da mão", "Hand side" },
             { "Este modelo é para qual pé?", "Which foot is this model for?" },
+            { "Este modelo é para qual mão?", "Which hand is this model for?" },
             { "◀ Esquerda", "◀ Left" },
             { "Direita ▶", "Right ▶" },
             { "Lado: Esquerda ◀", "Side: Left ◀" },

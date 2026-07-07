@@ -117,20 +117,21 @@ namespace CustomPartsMod
             Save();
         }
 
-        // Remembered left/right side for the LAST foot/shoe import, so the side prompt defaults to it.
-        // Stored in the reserved "__footside__" record's slot field as "L" (left) or "R" (right, default).
-        private const string FootSideKey = "__footside__";
+        // Remembered left/right side for the LAST import of each sided kind (feet, hands, ...), so the
+        // side prompt defaults to it. Stored per-kind (reserved "__side__<kind>" record's slot field, "L"
+        // or "R") so picking a hand side doesn't disturb the remembered foot side and vice versa.
+        private const string SideKeyPrefix = "__side__";
 
-        internal static bool GetLastFootSideLeft()
+        internal static bool GetLastSideLeft(string kind)
         {
             EnsureLoaded();
-            return Cache.TryGetValue(FootSideKey, out var t) && t.slot == "L";
+            return Cache.TryGetValue(SideKeyPrefix + kind, out var t) && t.slot == "L";
         }
 
-        internal static void SetLastFootSideLeft(bool left)
+        internal static void SetLastSideLeft(string kind, bool left)
         {
             EnsureLoaded();
-            Cache[FootSideKey] = new PartTransform { slot = left ? "L" : "R" };
+            Cache[SideKeyPrefix + kind] = new PartTransform { slot = left ? "L" : "R" };
             Save();
         }
 
