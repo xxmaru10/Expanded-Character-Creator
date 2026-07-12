@@ -17,9 +17,15 @@ namespace CustomPartsMod
         private static readonly HashSet<string> AccessorySegments = new HashSet<string>(
             StringComparer.OrdinalIgnoreCase)
         {
-            "Full_Helmets", "helmet", "helmetAdditions", "helmetAddition",
-            "shoulders", "attachments", "extras",
+            "Full_Helmets", "helmet", "helmetAdditions", "helmetAddition", "helmetAttachment",
+            "shoulders", "attachments", "extras", "back", "waist",
+            "ears", "ear", "F_Ears", "F_Ear", "C_Ears", "orelha", "orelhas",
+            "eyebrows", "eyebrow", "C_Eyebrow", "sobrancelha", "sobrancelhas",
+            "beard", "E_Beard", "barba", "barbas",
+            "hair", "B_Hair", "cabelo", "cabelos",
             "shoes", // the shoe subcategory stacks ON TOP of the feet (additive), like an accessory
+            "eyes", "olho", "olhos",
+            "brincos", "colares",
         };
 
         internal static bool IsAccessory(string[] categoryPath)

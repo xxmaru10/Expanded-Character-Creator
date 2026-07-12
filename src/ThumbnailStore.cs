@@ -18,6 +18,27 @@ namespace CustomPartsMod
 
         private static string ThumbsDir => Path.Combine(ScaleStore.CustomPartsDir, "thumbs");
 
+        static ThumbnailStore()
+        {
+            try
+            {
+                string markerPath = Path.Combine(ThumbsDir, "cleaned_v4.txt");
+                if (Directory.Exists(ThumbsDir) && !File.Exists(markerPath))
+                {
+                    foreach (var file in Directory.GetFiles(ThumbsDir, "*.png"))
+                    {
+                        try { File.Delete(file); } catch { }
+                    }
+                    File.WriteAllText(markerPath, "cleaned");
+                    Plugin.Log.LogInfo("[thumb] Cache antigo de miniaturas limpo para regeneracao.");
+                }
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning("Falha ao inicializar o cache de miniaturas: " + e.Message);
+            }
+        }
+
         private static string PathFor(string sourceKey) => Path.Combine(ThumbsDir, Sanitize(sourceKey) + ".png");
 
         /// <summary>Writes the portrait to disk and updates the in-memory cache.</summary>

@@ -4,9 +4,11 @@ language: pt-BR
 status: Fase 1 + TODAS as features do ROADMAP concluídas (P0–P7, P9–P15; P8 removido). Restam só
   polimentos opcionais (gizmo de setas coloridas sobre P11, sub-slots de acessório sobre P14,
   isolar a peça na miniatura). Ver ROADMAP.md/CHANGELOG.md.
-last_updated: 2026-07-07 (Iteração 29 — idioma automático PT/EN (Loc/LocButtons) e lado
-  Esquerda/Direita generalizado para Mãos além de Pés/Sapato (SidedCategory/SidePrompt).
-  CHANGELOG/ROADMAP são a fonte da verdade.)
+last_updated: 2026-07-08 (Iteração 31 — import de pasta recursivo (ambos os botões) + novo botão
+  "Importar Pasta (texturas compartilhadas)": por subpasta compartilha as texturas entre todos os OBJs
+  e auto-roteia cada peça pela categoria/slot/lado lendo o prefixo PT do nome (PartNameRouter +
+  NativeCategory, savePath nativo descoberto em runtime). Iteração 30 — carga preguiçosa da malha +
+  batch do scales.json. CHANGELOG/ROADMAP são a fonte da verdade.)
 fonte_da_verdade:
   historico: CHANGELOG.md          # o que já foi feito, iteração por iteração
   futuro: ROADMAP.md               # o que falta (P0–P11) com nota de viabilidade
@@ -62,10 +64,13 @@ Total ~1.5k linhas. "Âncora na engine" = a classe/membro do jogo que o arquivo 
 | `ImportFlow.cs` | Orquestra o import: lê a categoria aberta → file browser → registra parte → abre `ScaleSession`. | `MeshImporter.LoadMesh(Action<RPGMesh>,string[])`, `FileBrowser.Result` |
 | `MassImportButton.cs` | P1: injeta o botão "Importar Pasta" abaixo de "Importar Parte". | `CharacterCreator.createNew` |
 | `MassImportConfig.cs` | P1: painel de **convenções** (gênero/canal/escala/rotação/posição) aplicadas a toda a pasta; sem textura. | `MassImportSettings`, `PanelUi`, `ScaleStore` |
-| `MassImportFlow.cs` | P1: abre o painel → seletor de **pasta** → varre `.obj`, importa cada um com as convenções e persiste. | `FileBrowser.PickMode.Folders`, `Compat.ImportMesh` |
+| `MassImportFlow.cs` | P1: abre o painel → seletor de **pasta** (recursivo, `AllDirectories`) → varre `.obj`, importa cada um com as convenções (categoria aberta + lado) e persiste. | `FileBrowser.PickMode.Folders`, `Compat.ImportMesh` |
+| `SharedFolderImportButton.cs` / `SharedFolderImportFlow.cs` | Botão "Importar Pasta (texturas compartilhadas)": recursivo; **por subpasta** compartilha todas as texturas entre todos os OBJs (variante 0 ativa) e auto-roteia cada peça pela categoria/slot/lado. Placement do padrão da categoria (P6). | `Directory.GetFiles(AllDirectories)`, `Compat.ImportMesh`, `ScaleStore.TryGetCategoryDefault` |
+| `PartNameRouter.cs` | Lê o prefixo PT do nome (torso/braço/antebraço/mão/perna/pé + direito/esquerdo, accent-insensitive) → segmento(s) de categoria + `SidedCategory.Kind` + lado. Prefixo desconhecido → não roteia. | — (parsing) |
+| `NativeCategory.cs` | Resolve o savePath de uma categoria **nativa** por segmento (ex.: `uppers`,`hands`,`torso`) varrendo `attachmentPaths` em runtime; cacheia sucessos. | `CharacterCreator.attachmentPaths` (`PropDatabaseData.savePath`) |
 | `PanelUi.cs` | Helper de painel compartilhado (fundo/header/drag/campo/botão), extraído do padrão do `ScaleSession`. | Unity UI / SlickUi (`UiButton`, `UiInputField`) |
 | `CustomPartCatalog.cs` | Cria o `PropDatabaseData` sintético e injeta em `attachmentPaths`; força rebuild da aba. | `CharacterCreator.attachmentPaths`, `PropDatabaseData` |
-| `CustomPart.cs` | Modelo de dados da parte (id estável, categoria, caminho, slot, escala/offset). | — (POCO) |
+| `CustomPart.cs` | Modelo de dados da parte (id estável, categoria, caminho, slot, escala/offset) + `EnsureLoaded()` que importa malha/textura do disco **preguiçosamente** na 1ª aplicação (boot registra só metadados). | `MeshImporter.ImportNew` (via `Compat`) |
 | `CustomBodyPartAttachment.cs` | Constrói a malha em runtime como `CharacterAttachment`: pivô centralizado, escala compensada, `SetTexture`/`SetColor`. | `CharacterAttachment` (subclasse), `RiggedAttachments.AttachmentPoint` |
 | `BoneResolver.cs` | Acha o **osso animado** por substring de nome; fallback pro socket estático. | `character.boneHelper` |
 | `ScaleSession.cs` | Painel flutuante pós-import: campos Escala/X/Y/Z, – / +, "Textura…", Confirmar, preview ao vivo. | `creator.characterName` (`UiInputField`, clonado) |

@@ -4,7 +4,7 @@
     <TargetFramework>net472</TargetFramework>
     <AssemblyName>CustomPartsMod</AssemblyName>
     <Product>CustomPartsMod</Product>
-    <Version>0.1.0</Version>
+    <Version>0.1.2</Version>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <RootNamespace>CustomPartsMod</RootNamespace>
@@ -37,7 +37,10 @@
     <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(GameManaged)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(GameManaged)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.JSONSerializeModule"><HintPath>$(GameManaged)\UnityEngine.JSONSerializeModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AnimationModule"><HintPath>$(GameManaged)\UnityEngine.AnimationModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.ImageConversionModule"><HintPath>$(GameManaged)\UnityEngine.ImageConversionModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(GameManaged)\UnityEngine.PhysicsModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(GameManaged)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="SimpleFileBrowser.Runtime"><HintPath>$(GameManaged)\SimpleFileBrowser.Runtime.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.UI">     <HintPath>$(GameManaged)\UnityEngine.UI.dll</HintPath>     <Private>false</Private></Reference>
     <Reference Include="Unity.TextMeshPro">  <HintPath>$(GameManaged)\Unity.TextMeshPro.dll</HintPath>  <Private>false</Private></Reference>

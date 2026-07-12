@@ -16,6 +16,8 @@ namespace CustomPartsMod
         private static bool _loggedKeys;
 
         // Substrings to look for in a bone's name, per slot (checked in order, lower-cased).
+        // NOTE: In The RPG Engine's skeleton, "Shoulder_L/R" = upper arm bone (not clavicle).
+        // "Clavicle_L/R" = actual clavicle/shoulder. Searched in order, first match wins.
         private static readonly Dictionary<RiggedAttachType, string[]> Names =
             new Dictionary<RiggedAttachType, string[]>
         {
@@ -24,18 +26,25 @@ namespace CustomPartsMod
             { RiggedAttachType.hair,      new[] { "head" } },
             { RiggedAttachType.beard,     new[] { "jaw", "head" } },
             { RiggedAttachType.helmet,    new[] { "head" } },
-            { RiggedAttachType.torso,     new[] { "chest", "spine", "torso" } },
+            { RiggedAttachType.ears,      new[] { "head" } },
+            { RiggedAttachType.eyebrows,  new[] { "head" } },
+            { RiggedAttachType.helmetAttachment, new[] { "head" } },
+            { RiggedAttachType.torso,     new[] { "spine_01", "spine_02", "spine_03", "chest", "torso" } },
+            { RiggedAttachType.back,      new[] { "spine_03", "chest", "spine_02", "spine_01" } },
+            { RiggedAttachType.waist,     new[] { "hips", "pelvis" } },
             { RiggedAttachType.hip,       new[] { "hips", "pelvis" } },
             { RiggedAttachType.handR,     new[] { "hand" } },
             { RiggedAttachType.handL,     new[] { "hand" } },
-            { RiggedAttachType.armUpperR, new[] { "upperarm", "arm" } },
-            { RiggedAttachType.armUpperL, new[] { "upperarm", "arm" } },
-            { RiggedAttachType.armLowerR, new[] { "forearm", "lowerarm", "elbow" } },
-            { RiggedAttachType.armLowerL, new[] { "forearm", "lowerarm", "elbow" } },
-            { RiggedAttachType.legLowerR, new[] { "shin", "calf", "lowerleg", "knee" } },
-            { RiggedAttachType.legLowerL, new[] { "shin", "calf", "lowerleg", "knee" } },
-            { RiggedAttachType.shoulderR, new[] { "shoulder", "clavicle" } },
-            { RiggedAttachType.shoulderL, new[] { "shoulder", "clavicle" } },
+            { RiggedAttachType.armUpperR, new[] { "upperarm", "shoulder", "armupper" } },
+            { RiggedAttachType.armUpperL, new[] { "upperarm", "shoulder", "armupper" } },
+            { RiggedAttachType.armLowerR, new[] { "forearm", "lowerarm", "elbow", "armlower" } },
+            { RiggedAttachType.armLowerL, new[] { "forearm", "lowerarm", "elbow", "armlower" } },
+            { RiggedAttachType.legLowerR, new[] { "shin", "calf", "lowerleg", "knee", "leglower" } },
+            { RiggedAttachType.legLowerL, new[] { "shin", "calf", "lowerleg", "knee", "leglower" } },
+            { RiggedAttachType.kneeR,     new[] { "upperleg" } },
+            { RiggedAttachType.kneeL,     new[] { "upperleg" } },
+            { RiggedAttachType.shoulderR, new[] { "clavicle" } },
+            { RiggedAttachType.shoulderL, new[] { "clavicle" } },
         };
 
         internal static Transform Resolve(PickupableCharacter character, RiggedAttachType slot)
@@ -63,6 +72,7 @@ namespace CustomPartsMod
                 {
                     if (kv.Value == null) continue;
                     string k = kv.Key.ToLowerInvariant();
+                    if (k.Contains("attachment")) continue; // skip static sockets
                     if (!k.Contains(sub)) continue;
                     if (!SideOk(k, wantR, wantL)) continue;
                     return kv.Value;

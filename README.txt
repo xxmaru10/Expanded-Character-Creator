@@ -1,11 +1,11 @@
 
 
 
-DOWNLOAD HERE: Last release here: https://github.com/xxmaru10/Expanded-Character-Creator/releases/tag/0.1.1
+DOWNLOAD HERE: Last release here: https://github.com/xxmaru10/Expanded-Character-Creator/releases/tag/0.1.2
 
 ================================================================
  Custom Body Parts  -  a mod for The RPG Engine
- v0.1.0
+ v0.1.2
 ================================================================
 
 The mod's in-game text follows the game's language automatically:
@@ -31,10 +31,13 @@ It also adds:
   - An edit panel (opens on import, reopen with the "E" button):
     uniform + per-axis scale, rotation, position (type, nudge, or
     drag the part in the preview), gender, paint channel, attach
-    mode (accessory-on-top vs replace-the-slot) and texture variants.
-  - Two extra categories: "Eyes" (a sub-tab under Head) and
-    "Shoe (footwear)" (a button shown while you are in the Feet
-    category). The native "Feet" category is your normal feet.
+    mode (accessory-on-top vs replace-the-slot), texture variants
+    and the part's tag (change/clear it right there).
+  - Extra categories: "Eyes", "Earrings" and "Necklaces" are
+    sub-tabs under Head (earrings/necklaces show ONLY there, not in
+    Accessories — Accessories keeps hats). "Shoe (footwear)" is a
+    button shown while you are in the Feet category. The native
+    "Feet" category is your normal feet.
   - Feet & shoes: when importing you pick LEFT or RIGHT foot
     (legLowerL / legLowerR); a shoe stacks on top of the foot.
   - "Custom only" filter, tags, a "Random" roll (custom parts only,
@@ -49,7 +52,7 @@ REQUIREMENTS
 INSTALL
 -------
 1. Close the game.
-2. Extract EVERYTHING from "CustomPartsMod-v0.1.0.zip" into the
+2. Extract EVERYTHING from "CustomPartsMod-v0.1.2.zip" into the
    game's ROOT folder (where The_RPG_Engine.exe is):
      ...\steamapps\common\The RPG Engine\
    It should look like this:
@@ -130,6 +133,11 @@ then zip the CONTENTS of dist\package\ (the BepInEx 5.4.x x64 release
 itself provides everything else already in dist\package\: winhttp.dll,
 doorstop_config.ini, .doorstop_version, changelog.txt, BepInEx\core\).
 
+To SHARE the mod with other people, see DISTRIBUIR.md in the project
+root. You ship ONLY the clean, functional mod zip — none of your own
+content (no 3D models, no CustomParts, no config). The other person
+gets the expanded creator empty and imports their own .obj files.
+
 
 ================================================================
  PORTUGUÊS
@@ -152,11 +160,13 @@ Também adiciona:
   - Um painel de edição (abre no import, reabre no botão "E"):
     escala uniforme + por eixo, rotação, posição (digitar, empurrar
     ou arrastar a peça no preview), gênero, canal de pintura, modo de
-    encaixe (acessório por cima vs substitui o slot) e variações de
-    textura.
-  - Duas categorias extras: "Olhos" (uma sub-aba dentro de Cabeça) e
-    "Sapato (calçado)" (um botão que aparece quando você está na
-    categoria Pés). A categoria "Pés" nativa são os seus pés normais.
+    encaixe (acessório por cima vs substitui o slot), variações de
+    textura e a tag da peça (mudar/limpar ali mesmo).
+  - Categorias extras: "Olhos", "Brincos" e "Colares" são sub-abas
+    dentro de Cabeça (brincos/colares aparecem SÓ ali, não em
+    Acessórios — Acessórios fica só com os chapéus). "Sapato
+    (calçado)" é um botão que aparece quando você está na categoria
+    Pés. A categoria "Pés" nativa são os seus pés normais.
   - Pés e sapatos: ao importar você escolhe o pé ESQUERDO ou DIREITO
     (legLowerL / legLowerR); o sapato fica por cima do pé.
   - Filtro "Só custom", tags, um "Aleatório" (só peças custom, com
@@ -171,7 +181,7 @@ REQUISITOS
 INSTALAR
 --------
 1. Feche o jogo.
-2. Extraia TUDO de "CustomPartsMod-v0.1.0.zip" para a pasta RAIZ do
+2. Extraia TUDO de "CustomPartsMod-v0.1.2.zip" para a pasta RAIZ do
    jogo (onde fica The_RPG_Engine.exe):
      ...\steamapps\common\The RPG Engine\
    Deve ficar assim:
@@ -251,3 +261,8 @@ copie o DLL compilado para dist\package\BepInEx\plugins\CustomPartsMod\,
 depois compacte o CONTEÚDO de dist\package\ (a própria release do
 BepInEx 5.4.x x64 já traz tudo que está em dist\package\: winhttp.dll,
 doorstop_config.ini, .doorstop_version, changelog.txt, BepInEx\core\).
+
+Para DISPONIBILIZAR o mod para outras pessoas, veja DISTRIBUIR.md na
+raiz do projeto. Você envia SÓ o zip do mod puro e funcional — nada
+seu (nenhum modelo 3D, nenhum CustomParts, nenhuma config). A outra
+pessoa recebe o Criador expandido vazio e importa os próprios .obj.

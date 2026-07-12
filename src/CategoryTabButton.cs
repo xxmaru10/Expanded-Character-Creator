@@ -37,16 +37,18 @@ namespace CustomPartsMod
         private readonly string[] _path;
         private readonly Func<Sprite> _iconFactory;
         private readonly string _successMsg;
+        private readonly string _parentKeyword;
 
         private UiButton _button;
         private GameObject _indicator; // our own "selected" underline (clone of the anchor's)
 
-        internal CategoryTabButton(string goName, string[] path, Func<Sprite> iconFactory, string successMsg)
+        internal CategoryTabButton(string goName, string[] path, Func<Sprite> iconFactory, string successMsg, string parentKeyword = null)
         {
             _goName = goName;
             _path = path;
             _iconFactory = iconFactory;
             _successMsg = successMsg;
+            _parentKeyword = parentKeyword;
             Instances.Add(this);
         }
 
@@ -61,7 +63,23 @@ namespace CustomPartsMod
                 ? creator.itemTabsLoader.tabSystem.transform
                 : creator.itemTabsLoader.transform;
 
-            UiButton anchor = PickClosest(FindCategoryButtons(creator), reference);
+            var candidates = FindCategoryButtons(creator);
+            UiButton anchor = null;
+            if (!string.IsNullOrEmpty(_parentKeyword))
+            {
+                anchor = candidates.Find(b => 
+                    FullPath(b.transform).IndexOf(_parentKeyword, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    (_parentKeyword == "Extras" && (
+                        FullPath(b.transform).IndexOf("Attachments", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        FullPath(b.transform).IndexOf("Accessories", StringComparison.OrdinalIgnoreCase) >= 0
+                    ))
+                );
+            }
+            if (anchor == null)
+            {
+                anchor = PickClosest(candidates, reference);
+            }
+
             if (anchor == null)
             {
                 Plugin.Log.LogWarning($"[cat:{_goName}] nenhum botao de categoria (Set*Path*) encontrado para ancorar.");
@@ -119,6 +137,10 @@ namespace CustomPartsMod
             foreach (var b in root.GetComponentsInChildren<UiButton>(true))
             {
                 if (b == null || IsOurs(b.gameObject)) continue;
+
+                // Exclude mannequin silhouette buttons by ensuring we only clone panel sub-tab headers
+                if (FullPath(b.transform).IndexOf("TabHeaders", StringComparison.OrdinalIgnoreCase) < 0) continue;
+
                 if (IsCategoryButton(b, creator.itemTabsLoader)) list.Add(b);
             }
             return list;
@@ -301,7 +323,7 @@ namespace CustomPartsMod
             return i;
         }
 
-        private static string FullPath(Transform t)
+        internal static string FullPath(Transform t)
         {
             var sb = new StringBuilder(t.name);
             for (var p = t.parent; p != null; p = p.parent) sb.Insert(0, p.name + "/");

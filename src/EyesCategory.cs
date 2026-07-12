@@ -20,7 +20,9 @@ namespace CustomPartsMod
         {
             if (category == null) return false;
             foreach (var seg in category)
-                if (string.Equals(seg, "eyes", StringComparison.OrdinalIgnoreCase)) return true;
+                if (string.Equals(seg, "eyes", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(seg, "olho", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(seg, "olhos", StringComparison.OrdinalIgnoreCase)) return true;
             return false;
         }
     }

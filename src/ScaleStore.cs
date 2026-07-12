@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using UnityEngine;
+using RiggedAttachType = RpgEngine.Characters.CharacterCreatorEnums.RiggedAttachType;
 
 namespace CustomPartsMod
 {
@@ -26,6 +27,7 @@ namespace CustomPartsMod
         public string slot;        // RiggedAttachType name
         public int additive;       // P14 attach mode override: 0=auto, 1=accessory(additive), 2=replace
         public string tag;         // P10 — user tag/theme within the category ("" = none)
+        public string link;        // auto-equip group ID
     }
 
     // Top-level PUBLIC [Serializable] types with public fields — the JsonUtility pattern that
@@ -49,6 +51,7 @@ namespace CustomPartsMod
         public string slot;
         public int additive;                    // attach mode override (P14): 0=auto,1=accessory,2=replace
         public string tag;                      // user tag/theme within the category (P10)
+        public string link;                     // auto-equip group ID
     }
 
     /// <summary>
@@ -60,6 +63,7 @@ namespace CustomPartsMod
         private static readonly Dictionary<string, PartTransform> Cache =
             new Dictionary<string, PartTransform>(StringComparer.OrdinalIgnoreCase);
         private static bool _loaded;
+        private static bool _deferSave;
 
         internal static string CustomPartsDir
         {
@@ -76,31 +80,57 @@ namespace CustomPartsMod
         /// <summary>Per-axis scale is a multiplier; a stored 0 (missing/old record) means "no stretch" = 1.</summary>
         private static float Axis(float v) => v > 1e-4f ? v : 1f;
 
+        private static string NormalizeKey(string k)
+        {
+            if (k == null) return "";
+            return k.ToLowerInvariant().Replace("_", "").Replace("-", "").Replace(" ", "");
+        }
+
         internal static PartTransform Get(string key, float fallbackScale)
         {
             EnsureLoaded();
-            if (!string.IsNullOrEmpty(key) && Cache.TryGetValue(key, out var t)) return t;
+            if (TryGet(key, out var t)) return t;
             return new PartTransform { scale = fallbackScale, offset = Vector3.zero };
         }
 
         internal static bool TryGet(string key, out PartTransform value)
         {
             EnsureLoaded();
-            if (!string.IsNullOrEmpty(key) && Cache.TryGetValue(key, out value)) return true;
+            if (string.IsNullOrEmpty(key))
+            {
+                value = default;
+                return false;
+            }
+            if (Cache.TryGetValue(key, out value)) return true;
+
+            // Fallback: search with normalized key to bridge hyphen/underscore differences
+            string norm = NormalizeKey(key);
+            foreach (var kv in Cache)
+            {
+                if (NormalizeKey(kv.Key) == norm)
+                {
+                    value = kv.Value;
+                    return true;
+                }
+            }
+
             value = default;
             return false;
         }
 
-        // Global "last used" preference (hybrid default for the NEXT new model). Scale is stored as a
-        // MULTIPLIER over the per-mesh normalized scale (+ offset). Reserved key "__last__".
-        private const string LastKey = "__last__";
+        // Global calibrated scale, stored as a MULTIPLIER over each mesh's normalized size (so it carries
+        // to the next, possibly differently-scaled, model and always lands visible — the normalize step
+        // sizes the mesh to ~DefaultScale first, then this multiplier scales from there). Calibrated by
+        // the scale panel's "Confirmar" (with the category checkbox OFF) and reused by every new import.
+        // A shared offset rides along. Reserved key "__global__"; multiplier defaults to 1 when unset.
+        private const string GlobalKey = "__global__";
 
-        internal static void GetLast(out float multiplier, out Vector3 offset)
+        internal static void GetGlobalMult(out float multiplier, out Vector3 offset)
         {
             EnsureLoaded();
-            if (Cache.TryGetValue(LastKey, out var t))
+            if (Cache.TryGetValue(GlobalKey, out var t) && t.scale > 1e-6f)
             {
-                multiplier = t.scale > 1e-6f ? t.scale : 1f;
+                multiplier = t.scale;
                 offset = t.offset;
             }
             else
@@ -110,10 +140,10 @@ namespace CustomPartsMod
             }
         }
 
-        internal static void SetLast(float multiplier, Vector3 offset)
+        internal static void SetGlobalMult(float multiplier, Vector3 offset)
         {
             EnsureLoaded();
-            Cache[LastKey] = new PartTransform { scale = multiplier, offset = offset };
+            Cache[GlobalKey] = new PartTransform { scale = multiplier > 1e-6f ? multiplier : 1f, offset = offset };
             Save();
         }
 
@@ -135,22 +165,41 @@ namespace CustomPartsMod
             Save();
         }
 
-        // Per-category default, keyed by the exact tab (savePath prefix) so each tab has its own default
-        // (e.g. "Faces" and "Heads" are independent even though both attach to the head bone). Every NEW
-        // model imported into that tab inherits these placement values. Scale is a MULTIPLIER over each
-        // mesh's normalized size (so differently-sized models still land right); axis/rotation/offset are
-        // absolute. Reserved key prefix "__cat__". Gender/texture excluded (those stay per-model).
+        // Per-category override, keyed by the exact tab (savePath prefix) so each tab has its own default
+        // (e.g. "Faces" and "Heads" are independent even though both attach to the head bone). Set only
+        // when the user ticks the "Salvar como padrão desta categoria" checkbox — it OVERRIDES the global
+        // factor for this category. Every NEW model imported into that tab inherits these placement
+        // values. Scale is a MULTIPLIER over each mesh's normalized size (so differently-sized models
+        // still land right); axis/rotation/offset are absolute. Reserved key prefix "__cat__".
+        // Gender/texture excluded (those stay per-model).
         private const string CatPrefix = "__cat__";
 
-        private static string CategoryKey(string[] category)
+        private static string CategoryKey(string[] category, RiggedAttachType slot, string gender)
         {
             if (category == null || category.Length == 0) return null;
-            return CatPrefix + string.Join("/", category);
+            string baseKey = CatPrefix + string.Join("/", category);
+
+            // If the category is sided, append the side suffix (L or R) to have separate defaults
+            var kind = SidedCategory.KindOf(category);
+            if (kind != SidedCategory.Kind.None)
+            {
+                bool left = slot.ToString().EndsWith("L") || slot.ToString().EndsWith("l");
+                baseKey += left ? "__L" : "__R";
+            }
+
+            // Append gender suffix if specified
+            if (!string.IsNullOrEmpty(gender))
+            {
+                if (gender.Equals("Masculine", StringComparison.OrdinalIgnoreCase)) baseKey += "__M";
+                else if (gender.Equals("Feminine", StringComparison.OrdinalIgnoreCase)) baseKey += "__F";
+            }
+
+            return baseKey;
         }
 
-        internal static void SetCategoryDefault(string[] category, float multiplier, Vector3 axis, Vector3 euler, Vector3 offset)
+        internal static void SetCategoryDefault(string[] category, RiggedAttachType slot, string gender, float multiplier, Vector3 axis, Vector3 euler, Vector3 offset)
         {
-            string key = CategoryKey(category);
+            string key = CategoryKey(category, slot, gender);
             if (key == null) return;
             EnsureLoaded();
             Cache[key] = new PartTransform
@@ -160,29 +209,142 @@ namespace CustomPartsMod
                 euler = euler,
                 offset = offset,
             };
+            _deferSave = false;
             Save();
         }
 
-        internal static bool TryGetCategoryDefault(string[] category, out float multiplier, out Vector3 axis, out Vector3 euler, out Vector3 offset)
+        internal static bool TryGetCategoryDefault(string[] category, RiggedAttachType slot, string gender, out float multiplier, out Vector3 axis, out Vector3 euler, out Vector3 offset)
         {
             multiplier = 1f; axis = Vector3.one; euler = Vector3.zero; offset = Vector3.zero;
-            string key = CategoryKey(category);
-            if (key == null) return false;
+            if (category == null || category.Length == 0) return false;
             EnsureLoaded();
-            if (!Cache.TryGetValue(key, out var t)) return false;
 
-            multiplier = t.scale > 1e-6f ? t.scale : 1f;
-            axis = new Vector3(Axis(t.scaleAxis.x), Axis(t.scaleAxis.y), Axis(t.scaleAxis.z));
-            euler = t.euler;
-            offset = t.offset;
-            return true;
+            // 1. Try exact sided + gender key first (e.g. __cat__...__L__F or __cat__...__L__M)
+            string key = CategoryKey(category, slot, gender);
+            if (Cache.TryGetValue(key, out var t))
+            {
+                multiplier = t.scale > 1e-6f ? t.scale : 1f;
+                axis = new Vector3(Axis(t.scaleAxis.x), Axis(t.scaleAxis.y), Axis(t.scaleAxis.z));
+                euler = t.euler;
+                offset = t.offset;
+                return true;
+            }
+
+            // 2. Fallback to sided without gender suffix (Both gender default)
+            string sidedNoGenderKey = CategoryKey(category, slot, "");
+            if (Cache.TryGetValue(sidedNoGenderKey, out t))
+            {
+                multiplier = t.scale > 1e-6f ? t.scale : 1f;
+                axis = new Vector3(Axis(t.scaleAxis.x), Axis(t.scaleAxis.y), Axis(t.scaleAxis.z));
+                euler = t.euler;
+                offset = t.offset;
+                return true;
+            }
+
+            // 3. Fallback: if sided, try the other side's key with gender and mirror it
+            var kind = SidedCategory.KindOf(category);
+            if (kind != SidedCategory.Kind.None)
+            {
+                bool left = slot.ToString().EndsWith("L") || slot.ToString().EndsWith("l");
+                RiggedAttachType otherSlot = left ? SidedCategory.RightSlot(kind) : SidedCategory.LeftSlot(kind);
+                
+                // Try other side with gender
+                string otherSidedGenderKey = CategoryKey(category, otherSlot, gender);
+                if (Cache.TryGetValue(otherSidedGenderKey, out t))
+                {
+                    multiplier = t.scale > 1e-6f ? t.scale : 1f;
+                    axis = new Vector3(Axis(t.scaleAxis.x), Axis(t.scaleAxis.y), Axis(t.scaleAxis.z));
+                    euler = t.euler;
+                    offset = t.offset;
+                    SidedCategory.MirrorTransformForLeft(left ? slot : otherSlot, ref offset, ref euler);
+                    return true;
+                }
+
+                // Try other side without gender
+                string otherSidedNoGenderKey = CategoryKey(category, otherSlot, "");
+                if (Cache.TryGetValue(otherSidedNoGenderKey, out t))
+                {
+                    multiplier = t.scale > 1e-6f ? t.scale : 1f;
+                    axis = new Vector3(Axis(t.scaleAxis.x), Axis(t.scaleAxis.y), Axis(t.scaleAxis.z));
+                    euler = t.euler;
+                    offset = t.offset;
+                    SidedCategory.MirrorTransformForLeft(left ? slot : otherSlot, ref offset, ref euler);
+                    return true;
+                }
+            }
+
+            // 4. Fallback: try base category key without side/gender suffixes (for older records or non-sided)
+            string baseKey = CatPrefix + string.Join("/", category);
+            // Try base key with gender
+            string baseGenderKey = baseKey + (string.IsNullOrEmpty(gender) ? "" : (gender.Equals("Masculine", StringComparison.OrdinalIgnoreCase) ? "__M" : "__F"));
+            if (Cache.TryGetValue(baseGenderKey, out t))
+            {
+                multiplier = t.scale > 1e-6f ? t.scale : 1f;
+                axis = new Vector3(Axis(t.scaleAxis.x), Axis(t.scaleAxis.y), Axis(t.scaleAxis.z));
+                euler = t.euler;
+                offset = t.offset;
+                
+                bool left = slot.ToString().EndsWith("L") || slot.ToString().EndsWith("l");
+                if (left) SidedCategory.MirrorTransformForLeft(slot, ref offset, ref euler);
+                return true;
+            }
+
+            // Try base key without gender
+            if (Cache.TryGetValue(baseKey, out t))
+            {
+                multiplier = t.scale > 1e-6f ? t.scale : 1f;
+                axis = new Vector3(Axis(t.scaleAxis.x), Axis(t.scaleAxis.y), Axis(t.scaleAxis.z));
+                euler = t.euler;
+                offset = t.offset;
+                
+                bool left = slot.ToString().EndsWith("L") || slot.ToString().EndsWith("l");
+                if (left) SidedCategory.MirrorTransformForLeft(slot, ref offset, ref euler);
+                return true;
+            }
+
+            return false;
         }
 
         internal static void Set(string key, PartTransform value)
         {
             if (string.IsNullOrEmpty(key)) return;
             EnsureLoaded();
+
+            // Clean up any existing key that has the same normalized name to avoid duplicates
+            string norm = NormalizeKey(key);
+            List<string> toRemove = null;
+            foreach (var kv in Cache)
+            {
+                if (NormalizeKey(kv.Key) == norm && !string.Equals(kv.Key, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    (toRemove ?? (toRemove = new List<string>())).Add(kv.Key);
+                }
+            }
+            if (toRemove != null)
+            {
+                foreach (var oldKey in toRemove) Cache.Remove(oldKey);
+            }
+
             Cache[key] = value;
+            Save();
+        }
+
+        /// <summary>
+        /// Batches disk writes. While a batch is open, Set/SetGlobalMult/etc. update the in-memory cache but
+        /// skip writing the file; <see cref="Flush"/> writes it once at the end. Mass import wraps its
+        /// loop in this so a 600-item folder rewrites scales.json ONCE instead of once per item — the
+        /// per-item full-file rewrite is O(n) over the whole (growing) store, i.e. O(n²) for the batch.
+        /// </summary>
+        internal static void BeginBatch()
+        {
+            EnsureLoaded();
+            _deferSave = true;
+        }
+
+        /// <summary>Ends a batch opened by <see cref="BeginBatch"/> and writes the file a single time.</summary>
+        internal static void Flush()
+        {
+            _deferSave = false;
             Save();
         }
 
@@ -192,11 +354,30 @@ namespace CustomPartsMod
         internal static bool TryUpdateVariants(string key, string[] variants, int activeVariant, string activePath)
         {
             EnsureLoaded();
-            if (string.IsNullOrEmpty(key) || !Cache.TryGetValue(key, out var t)) return false;
+            if (string.IsNullOrEmpty(key)) return false;
+
+            string actualKey = key;
+            if (!Cache.ContainsKey(key))
+            {
+                string norm = NormalizeKey(key);
+                bool found = false;
+                foreach (var k in Cache.Keys)
+                {
+                    if (NormalizeKey(k) == norm)
+                    {
+                        actualKey = k;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) return false;
+            }
+
+            var t = Cache[actualKey];
             t.textureVariants = variants;
             t.activeVariant = activeVariant;
             t.texturePath = activePath;
-            Cache[key] = t;
+            Cache[actualKey] = t;
             Save();
             return true;
         }
@@ -207,19 +388,39 @@ namespace CustomPartsMod
         internal static bool TryUpdateTag(string key, string tag)
         {
             EnsureLoaded();
-            if (string.IsNullOrEmpty(key) || !Cache.TryGetValue(key, out var t)) return false;
+            if (string.IsNullOrEmpty(key)) return false;
+
+            string actualKey = key;
+            if (!Cache.ContainsKey(key))
+            {
+                string norm = NormalizeKey(key);
+                bool found = false;
+                foreach (var k in Cache.Keys)
+                {
+                    if (NormalizeKey(k) == norm)
+                    {
+                        actualKey = k;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) return false;
+            }
+
+            var t = Cache[actualKey];
             t.tag = tag ?? "";
-            Cache[key] = t;
+            Cache[actualKey] = t;
             Save();
             return true;
         }
 
-        /// <summary>Saved models that can be rebuilt on load (have a model path); excludes __last__.</summary>
+        /// <summary>Saved models that can be rebuilt on load (have a model path). The reserved records
+        /// (__global__, __cat__…, __side__…) carry no modelPath, so this filter skips them.</summary>
         internal static IEnumerable<KeyValuePair<string, PartTransform>> AllModels()
         {
             EnsureLoaded();
             foreach (var kv in Cache)
-                if (kv.Key != LastKey && !string.IsNullOrEmpty(kv.Value.modelPath))
+                if (!string.IsNullOrEmpty(kv.Value.modelPath))
                     yield return kv;
         }
 
@@ -227,7 +428,22 @@ namespace CustomPartsMod
         {
             if (string.IsNullOrEmpty(key)) return;
             EnsureLoaded();
-            if (Cache.Remove(key)) Save();
+
+            string actualKey = key;
+            if (!Cache.ContainsKey(key))
+            {
+                string norm = NormalizeKey(key);
+                foreach (var k in Cache.Keys)
+                {
+                    if (NormalizeKey(k) == norm)
+                    {
+                        actualKey = k;
+                        break;
+                    }
+                }
+            }
+
+            if (Cache.Remove(actualKey)) Save();
         }
 
         // One JSON object per LINE (JSONL). A single flat [Serializable] object always round-trips
@@ -263,6 +479,7 @@ namespace CustomPartsMod
                         slot = e.slot,
                         additive = e.additive,
                         tag = e.tag,
+                        link = e.link
                     };
                 }
                 Plugin.Log.LogInfo($"[store] carregados {Cache.Count} registro(s) de scales.json");
@@ -275,6 +492,7 @@ namespace CustomPartsMod
 
         private static void Save()
         {
+            if (_deferSave) return; // inside a batch: BeginBatch/Flush writes once at the end
             try
             {
                 Directory.CreateDirectory(CustomPartsDir);
@@ -303,6 +521,7 @@ namespace CustomPartsMod
                         slot = kv.Value.slot,
                         additive = kv.Value.additive,
                         tag = kv.Value.tag,
+                        link = kv.Value.link
                     };
                     sb.AppendLine(JsonUtility.ToJson(e)); // one compact JSON per line
                 }

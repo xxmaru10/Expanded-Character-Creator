@@ -54,8 +54,24 @@ namespace CustomPartsMod
             return byKey.Values.OrderBy(g => g.Label, StringComparer.CurrentCultureIgnoreCase).ToList();
         }
 
+        /// <summary>A category's draw pool: its custom parts, narrowed to the selected tag when a tag
+        /// filter is active (so "Aleatorizar" rolls only within that theme). No tag selected ⇒ all parts.</summary>
+        private static List<string> PoolFor(Group g)
+        {
+            if (!TagManager.FilterActive) return g.PartIds;
+            string tag = TagManager.SelectedTag;
+            var pool = new List<string>();
+            foreach (var id in g.PartIds)
+                if (CustomPartCatalog.TryGet(id, out var p) &&
+                    string.Equals(p.Tag, tag, StringComparison.CurrentCultureIgnoreCase))
+                    pool.Add(id);
+            return pool;
+        }
+
         /// <summary>Re-rolls every UNLOCKED category, applying one random custom part in each. Locked
-        /// categories are left exactly as they are.</summary>
+        /// categories are left exactly as they are. When a tag is selected, only parts of that tag are
+        /// drawn (a category with none in the tag is skipped). Only IMPORTED (custom) parts are ever
+        /// drawn — native game parts are never touched.</summary>
         internal static void Randomize()
         {
             var creator = UniqueMono<CharacterCreator>.instance;
@@ -65,14 +81,20 @@ namespace CustomPartsMod
                 return;
             }
 
-            int changed = 0;
-            foreach (var g in Groups())
+            var groups = Groups();
+            int unlocked = 0, poolTotal = 0;
+            foreach (var g in groups)
             {
                 if (_locked.Contains(g.Key) || g.PartIds.Count == 0) continue;
+                unlocked++;
 
-                // The custom part currently applied in this category (if any).
+                var pool = PoolFor(g);
+                poolTotal += pool.Count;
+                if (pool.Count == 0) continue; // nothing of the selected tag in this category
+
+                // The custom part currently applied in this category (any tag), so we can swap it out.
                 string applied = g.PartIds.FirstOrDefault(id => creator.dummy.attachedItems.ContainsKey(id));
-                string pick = g.PartIds[UnityEngine.Random.Range(0, g.PartIds.Count)];
+                string pick = pool[UnityEngine.Random.Range(0, pool.Count)];
                 if (pick == applied) continue; // already showing the drawn part
 
                 // Explicitly swap: remove the old custom part (covers additive parts like eyes, which the
@@ -81,11 +103,12 @@ namespace CustomPartsMod
                     creator.SpawnAlongside(applied);
                 if (!creator.dummy.Contains(pick))
                     creator.SpawnAlongside(pick);
-                changed++;
             }
 
-            if (changed == 0 && Groups().Count == 0)
-                Compat.ShowError("Importe peças custom primeiro — não há nada para sortear.");
+            if (unlocked > 0 && poolTotal == 0)
+                Compat.ShowError(TagManager.FilterActive
+                    ? $"Nenhuma peça custom com a tag \"{TagManager.SelectedTag}\" para sortear."
+                    : "Importe peças custom primeiro — não há nada para sortear.");
         }
 
         /// <summary>Friendly PT label for a category from its savePath segments; falls back to the last

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -61,6 +62,15 @@ namespace CustomPartsMod
         }
 
         private static void OnMeshLoaded(RPGMesh rpg, string[] category, RiggedAttachType slot)
+            => ImportLoadedMesh(rpg, category, slot, null, null);
+
+        /// <summary>Registers an already-loaded mesh as a custom part, applies it to the preview and opens
+        /// the live scale panel. <paramref name="modelPathOverride"/> is the source .obj (for texture
+        /// pairing + reload); when null it falls back to the file browser's last pick (single import).
+        /// <paramref name="folderCtx"/> is non-null only for the mass-import preview: the panel then shows
+        /// an "apply to the whole folder" button that imports the rest with the values chosen here.</summary>
+        internal static void ImportLoadedMesh(RPGMesh rpg, string[] category, RiggedAttachType slot,
+            string modelPathOverride, FolderImportContext folderCtx)
         {
             if (rpg == null || rpg.mesh == null || rpg.mesh.vertexCount == 0)
             {
@@ -80,16 +90,33 @@ namespace CustomPartsMod
             string sourceKey = string.IsNullOrEmpty(rpg.id) ? "part" : rpg.id;
             string id = MakeId(sourceKey);
 
-            // Hybrid sizing. Base = normalized so any OBJ (often tiny) is visible and never 100x off.
-            // If this exact model was tuned before, use its saved absolute scale/offset; otherwise
-            // start from normalized * the user's last-used multiplier (their preference carries over
-            // to new models without breaking on differently-scaled ones).
+            // Sizing. Base = normalized so any OBJ (often tiny in native units) is visible on import and
+            // never 100x off. If this exact model was tuned before, use its saved absolute values;
+            // otherwise start from normalized × a calibrated multiplier (a per-category override if the
+            // checkbox pinned one, else the global factor) so the user's size preference carries to new
+            // models without breaking on differently-scaled ones. Priority: saved → category → global.
             float normalized = NormalizeScale(mesh);
             bool hasSaved = ScaleStore.TryGet(sourceKey, out PartTransform saved);
 
             float startScale;
             Vector3 startOffset, startScaleAxis, startEuler;
             string startGender;
+
+            if (hasSaved)
+            {
+                startGender = saved.gender ?? "";
+            }
+            else
+            {
+                string k = sourceKey.ToLowerInvariant();
+                if (k.Contains("yf") || k.Contains("female") || k.Contains("feminino") || k.Contains("mulher"))
+                    startGender = "Feminine";
+                else if (k.Contains("ym") || k.Contains("male") || k.Contains("masculino") || k.Contains("homem"))
+                    startGender = "Masculine";
+                else
+                    startGender = "";
+            }
+
             if (hasSaved)
             {
                 // Re-importing a file that was tuned before: reproduce its exact saved values.
@@ -97,29 +124,27 @@ namespace CustomPartsMod
                 startOffset = saved.offset;
                 startScaleAxis = saved.scaleAxis;
                 startEuler = saved.euler;
-                startGender = saved.gender ?? "";
             }
-            else if (ScaleStore.TryGetCategoryDefault(category, out float catMult, out Vector3 catAxis, out Vector3 catEuler, out Vector3 catOffset))
+            else if (ScaleStore.TryGetCategoryDefault(category, slot, startGender, out float catMult, out Vector3 catAxis, out Vector3 catEuler, out Vector3 catOffset))
             {
-                // A NEW model in a tab that has a saved default ("all heads look like this"):
-                // scale = normalized × the category multiplier so different-sized meshes still land right.
+                // A NEW model in a tab whose category default was pinned via the checkbox ("all heads
+                // look like this"): scale = normalized × the category multiplier so different-sized
+                // meshes still land right, overriding the global factor.
                 startScale = normalized * catMult;
                 startScaleAxis = catAxis;
                 startEuler = catEuler;
                 startOffset = catOffset;
-                startGender = "";
             }
             else
             {
-                // No category default yet: fall back to the global last-used multiplier/offset (P1b).
-                ScaleStore.GetLast(out float lastMult, out Vector3 lastOffset);
-                startScale = normalized * lastMult;
+                // No category override: use the calibrated GLOBAL multiplier over the normalized base.
+                ScaleStore.GetGlobalMult(out float globalMult, out Vector3 globalOffset);
+                startScale = normalized * globalMult;
                 // Eyes sit slightly IN FRONT of the face by default (user-requested Z ≈ 0.12); the
-                // unrelated last-used offset from other parts doesn't apply to them.
-                startOffset = EyesCategory.Is(category) ? new Vector3(0f, 0f, 0.12f) : lastOffset;
+                // unrelated global offset from other parts doesn't apply to them.
+                startOffset = EyesCategory.Is(category) ? new Vector3(0f, 0f, 0.12f) : globalOffset;
                 startScaleAxis = Vector3.one;
                 startEuler = Vector3.zero;
-                startGender = "";
             }
             string savedTexPath = hasSaved ? saved.texturePath : null;
             // Paint channel (P2): saved per-model override wins, else auto by category.
@@ -132,8 +157,11 @@ namespace CustomPartsMod
 
             // The OBJ importer loads geometry only. Find a texture: the one saved for this model,
             // else a sibling of the model file (its .mtl map_Kd or a same-named PNG). The user can
-            // also add more from the panel (P13 variant boxes).
-            string modelPath = FileBrowser.Result != null && FileBrowser.Result.Length > 0 ? FileBrowser.Result[0] : null;
+            // also add more from the panel (P13 variant boxes). The path is the explicit source when
+            // given (mass-import preview), else the file browser's last pick (single import).
+            string modelPath = !string.IsNullOrEmpty(modelPathOverride)
+                ? modelPathOverride
+                : (FileBrowser.Result != null && FileBrowser.Result.Length > 0 ? FileBrowser.Result[0] : null);
 
             // P13 — texture variants. On re-import of a tuned model, restore its saved variant list;
             // otherwise start with the single auto-paired sibling texture as variant 0.
@@ -146,9 +174,52 @@ namespace CustomPartsMod
             }
             else
             {
-                string single = !string.IsNullOrEmpty(savedTexPath) && File.Exists(savedTexPath)
-                    ? savedTexPath : TextureLoader.FindSibling(modelPath);
-                if (!string.IsNullOrEmpty(single)) variants.Add(single);
+                // Fresh import: auto-pair the model's textures. Variant 0 is the same-named sibling
+                // (the CAS Batch Exporter writes "<model>.png"); the numbered siblings
+                // "<model>1.png", "<model>2.png", ... it writes for the other colour swatches fill the
+                // "+" variant slots automatically. A saved single texture, if any, stays as variant 0.
+                var found = TextureLoader.FindVariants(modelPath);
+                if (!string.IsNullOrEmpty(savedTexPath) && File.Exists(savedTexPath))
+                {
+                    variants.Add(savedTexPath);
+                    foreach (var v in found)
+                        if (!variants.Contains(v)) variants.Add(v);
+                }
+                else
+                {
+                    variants.AddRange(found);
+                }
+            }
+
+            // Copy model and texture files to CustomParts/models/<folderName>/ to make them self-contained
+            string linkGroupId = PartNameRouter.ResolveLinkGroupId(sourceKey, "");
+            string folderName = !string.IsNullOrEmpty(linkGroupId) ? linkGroupId : id;
+            string destDir = Path.Combine(ScaleStore.CustomPartsDir, "models", folderName);
+            try
+            {
+                Directory.CreateDirectory(destDir);
+                string destObj = Path.Combine(destDir, Path.GetFileName(modelPath));
+                if (File.Exists(modelPath) && !string.Equals(Path.GetFullPath(modelPath), Path.GetFullPath(destObj), StringComparison.OrdinalIgnoreCase))
+                {
+                    File.Copy(modelPath, destObj, true);
+                }
+                modelPath = destObj;
+
+                for (int i = 0; i < variants.Count; i++)
+                {
+                    string origTex = variants[i];
+                    if (string.IsNullOrEmpty(origTex) || !File.Exists(origTex)) continue;
+                    string destTex = Path.Combine(destDir, Path.GetFileName(origTex));
+                    if (!string.Equals(Path.GetFullPath(origTex), Path.GetFullPath(destTex), StringComparison.OrdinalIgnoreCase))
+                    {
+                        File.Copy(origTex, destTex, true);
+                    }
+                    variants[i] = destTex;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[copy-self-contained] Falha ao copiar arquivos para a pasta do mod: {ex.Message}");
             }
 
             string texPath = variants.Count > 0 ? variants[activeVariant] : null;
@@ -177,6 +248,7 @@ namespace CustomPartsMod
                 LocalEuler = startEuler,
                 GenderTag = startGender,
                 AdditiveOverride = startAdditive,
+                LinkGroupId = linkGroupId,
                 Additive = AccessoryMap.ResolveAdditive(category, startAdditive), // eyes/accessories add on top (P14)
             };
 
@@ -195,11 +267,14 @@ namespace CustomPartsMod
                 && placed is CustomBodyPartAttachment custom
                 && creator.createNew != null)
             {
+                Thumbnailer.Capture(custom);
+
                 var canvas = creator.createNew.GetComponentInParent<Canvas>();
                 Transform canvasT = canvas != null ? canvas.rootCanvas.transform : creator.transform;
                 GameObject inputTemplate = creator.characterName != null ? creator.characterName.gameObject : null;
                 ScaleSession.Open(creator.createNew.gameObject, inputTemplate, canvasT, custom,
-                    sourceKey, part.DisplayName, startScale, startOffset, startEuler, startScaleAxis, startGender);
+                    sourceKey, part.DisplayName, startScale, startOffset, startEuler, startScaleAxis, startGender,
+                    folderCtx);
             }
         }
 

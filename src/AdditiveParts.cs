@@ -34,14 +34,30 @@ namespace CustomPartsMod
             _reapplying = true;
             try
             {
-                foreach (var id in Active)
+                // Iterate a snapshot: AddPart below re-enters other patches that may call SetIntent,
+                // mutating Active mid-enumeration (throws "Collection was modified" and, during async
+                // map load, aborts the whole LoadBook). The copy makes re-adds safe.
+                foreach (var id in new List<string>(Active))
                 {
                     if (character.attachedItems.ContainsKey(id)) continue;
                     if (!CustomPartCatalog.IsCustom(id)) continue;
                     try
                     {
                         var att = character.AddPart(id);          // our prefix rebuilds the mesh
-                        if (att != null) SetLayer(att.gameObject, 21); // creator preview renders layer 21
+                        // Match the re-added part to the layer of the bone it hangs on — NOT a hardcoded 21.
+                        // Build() already sets that (go.layer = parent bone layer): in the creator the bone
+                        // is on layer 21 (preview camera), so this stays 21; on a MAP character the bone is
+                        // on the default layer. Forcing 21 here made re-added accessories (glasses, and an
+                        // additive shoe) invisible on the map — the map camera doesn't render layer 21 —
+                        // even though they were still attached (they showed in the creator, vanished on the
+                        // map). Inherit the parent's layer so map characters keep the accessory visible.
+                        if (att != null)
+                        {
+                            int layer = att.transform.parent != null
+                                ? att.transform.parent.gameObject.layer
+                                : att.gameObject.layer;
+                            SetLayer(att.gameObject, layer);
+                        }
                     }
                     catch (Exception e) { Plugin.Log.LogWarning("[additive] reapply " + id + ": " + e.Message); }
                 }

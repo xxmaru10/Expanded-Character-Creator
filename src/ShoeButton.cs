@@ -37,14 +37,12 @@ namespace CustomPartsMod
             {
                 // Same top-right mod-button column as Importar Parte/Pasta/Aleatório, in the next free slot.
                 rt.sizeDelta = new Vector2(Mathf.Max(rt.sizeDelta.x, 170f), Mathf.Max(rt.sizeDelta.y, 34f));
-                rt.anchoredPosition += new Vector2(-230f, -154f);
+                rt.anchoredPosition += new Vector2(-230f, -292f);
             }
 
             LocButtons.Register(_button, "Sapato (calçado)"); // keep it localized on runtime language change
 
-            // Shown only in the feet context — reflect the currently open category right away.
-            UpdateVisibility(Compat.GetPathFilter(creator.itemTabsLoader));
-            Plugin.Log.LogInfo("Botao 'Sapato' injetado (aparece na categoria de pes).");
+            Plugin.Log.LogInfo("Botao 'Sapato' injetado.");
         }
 
         private static void Open(CharacterCreator creator)
@@ -52,30 +50,6 @@ namespace CustomPartsMod
             if (creator == null || creator.itemTabsLoader == null) return;
             creator.itemTabsLoader.SetPathFilter(ShoeCategory.Path);
             Compat.ShowSuccess("Categoria Sapato. Importe um sapato (escolha o lado) ou escolha um da lista.");
-        }
-
-        /// <summary>Visible only when the open category is a feet or shoe one (so it reads as a sub-option
-        /// of Pés) — NOT for hands, which are also a sided category but unrelated to footwear.</summary>
-        internal static void UpdateVisibility(string[] category)
-        {
-            if (_button == null) return;
-            _button.gameObject.SetActive(SidedCategory.KindOf(category) == SidedCategory.Kind.Feet);
-        }
-    }
-
-    /// <summary>Shows/hides the Sapato button as the user navigates categories: every category click funnels
-    /// through <c>BuildTabsWithPathButtons.SetPathFilter(string[])</c>.</summary>
-    [HarmonyPatch]
-    internal static class Patch_ShoeButton_Visibility
-    {
-        private static MethodBase TargetMethod()
-            => AccessTools.Method(typeof(BuildTabsWithPathButtons), "SetPathFilter", new[] { typeof(string[]) });
-
-        private static void Postfix(BuildTabsWithPathButtons __instance, string[] path)
-        {
-            var creator = UnityUtils.UniqueMono<CharacterCreator>.instance;
-            if (creator == null || __instance != creator.itemTabsLoader) return; // only the character tabs
-            ShoeButton.UpdateVisibility(path);
         }
     }
 }

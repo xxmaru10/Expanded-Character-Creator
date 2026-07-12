@@ -76,6 +76,17 @@ namespace CustomPartsMod
             Refresh();
         }
 
+        /// <summary>Remember a tag so its chip shows, WITHOUT changing the current selection/filter.
+        /// Used when editing a part's tag from the edit panel (we don't want to hijack the open filter).
+        /// Empty input is a no-op. Refreshes the tab so the chip and any filter re-evaluate.</summary>
+        internal static void NoteTag(string tag)
+        {
+            string t = Normalize(tag);
+            if (string.IsNullOrEmpty(t)) return;
+            KnownTags.Add(t);
+            Refresh();
+        }
+
         /// <summary>Distinct tags: created this session plus those already on imported parts.</summary>
         internal static List<string> AllTags()
         {
@@ -89,6 +100,7 @@ namespace CustomPartsMod
         {
             var creator = UniqueMono<CharacterCreator>.instance;
             if (creator != null && creator.itemTabsLoader != null) creator.itemTabsLoader.Refresh();
+            TagBar.Refresh(); // keep the chip row in sync with the current set of tags
         }
 
         private static string Normalize(string s) => string.IsNullOrWhiteSpace(s) ? "" : s.Trim();

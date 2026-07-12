@@ -15,13 +15,16 @@ namespace CustomPartsMod
     /// Floating panel shown right after importing a part (or reopened via the edit button, P6):
     /// previews the mesh in place and lets the user type uniform scale, per-axis scale (P4),
     /// rotation (P5), X/Y/Z offset and gender (P3) — all applied live. Texture variants (P13) live in
-    /// the top-center VariantBar shown on selection. "Salvar padrão"
-    /// persists it as the model's default (<see cref="ScaleStore"/>); "Só desta vez" applies it to
-    /// the current instance only, without persisting. One active at a time.
+    /// the top-center VariantBar shown on selection. "Confirmar" persists the model's placement
+    /// (<see cref="ScaleStore"/>) and either recalibrates the global scale factor or — when the
+    /// "Salvar como padrão desta categoria" checkbox is ticked — pins this tab's category override.
+    /// "Cancelar" reverts to the opening values without persisting. One active at a time.
     /// </summary>
     internal class ScaleSession : MonoBehaviour
     {
         private static ScaleSession _current;
+
+        internal static bool IsModeling => _current != null && _current._modeling;
 
         // Remember where the user dragged the panel so it reopens in the same spot this session.
         private static Vector2 _lastPanelPos = new Vector2(0f, -60f);
@@ -31,13 +34,15 @@ namespace CustomPartsMod
         private CustomBodyPartAttachment _attachment;
         private string _storeKey;
         private string _displayName;
+        private FolderImportContext _folderCtx; // non-null: mass-import preview (values apply to the folder)
 
-        private TMP_Text _label;
         private UiInputField _scaleField;
         private UiInputField _sxField, _syField, _szField; // per-axis scale multiplier (P4)
         private UiInputField _xField, _yField, _zField;    // offset
         private UiInputField _rxField, _ryField, _rzField; // rotation (P5)
         private UiInputField _stepField;                   // position nudge step (fine control)
+        private UiInputField _rotStepField;                // rotation nudge step in degrees
+        private UiInputField _tagField;                    // P10 — edit this part's tag/theme
         private UiButton _genderBtn;                       // gender cycle (P3)
         private UiButton _channelBtn;                      // paint channel cycle (P2)
         private UiButton _encaixeBtn;                      // attach-mode cycle (P14)
@@ -45,6 +50,29 @@ namespace CustomPartsMod
         private string _gender = "";                       // "", "Feminine", "Masculine"
         private string _channel = ChannelMap.Primary;      // paint channel id (P2)
         private int _additiveMode;                         // P14: 0=auto, 1=accessory(additive), 2=replace
+        private string _tag = "";                          // P10 — this part's tag/theme
+
+        // Values the panel opened with — "Cancelar" reverts the live instance to these (persists nothing).
+        private float _startScale;
+        private Vector3 _startOffset, _startEuler, _startScaleAxis;
+
+        // Checkbox: when ON, "Confirmar" pins this placement as the category default (overriding the
+        // global factor for this tab); when OFF, "Confirmar" (re)calibrates the global factor instead.
+        private bool _saveCategoryDefault;
+        private UiButton _catDefaultBtn;
+        private bool _tPoseActive;
+        private UiButton _tPoseBtn;
+
+        // Tab system and collapse state
+        private int _activeTab = 0;
+        private bool _collapsed = false;
+        private GameObject _tabsRowGo;
+        private GameObject _tab0Go; // Mov/Esc
+        private GameObject _tab1Go; // Rotação
+        private GameObject _tab2Go; // Opções/3D
+        private GameObject _confirmRowGo;
+        private TMP_Text _collapseBtnText;
+        private readonly UiButton[] _tabButtons = new UiButton[3];
 
         private static readonly string[] EncaixeLabels =
             { "Encaixe: Auto", "Encaixe: Acessório (por cima)", "Encaixe: Substitui o slot" };
@@ -56,9 +84,10 @@ namespace CustomPartsMod
         private readonly UiButton[] _modeChips = new UiButton[3]; // 2=posição, 3=grossura, 4=rotação
         private bool _modeling;
         private int _mode;                                 // 0=position, 1=thickness(scale), 2=rotation
-        private GameObject _blocker;                       // absorbs SlickUi presses so the camera won't spin
         private bool _dragging;
         private Vector3 _lastMouse;
+        private Vector3 _dragStartMouse;
+        private int _dragLockedAxis = -1;                  // -1=unlocked, 0=horizontal (sides), 1=vertical (up/down)
         private Camera _previewCam;                        // creatorCam.cam
         private RectTransform _previewRect;                // creatorCam.inputPanel
         private Camera _uiCam;                             // canvas render camera (null for overlay)
@@ -92,7 +121,8 @@ namespace CustomPartsMod
 
         internal static void Open(GameObject buttonTemplate, GameObject inputTemplate, Transform canvas,
             CustomBodyPartAttachment attachment, string storeKey, string displayName,
-            float startScale, Vector3 startOffset, Vector3 startEuler, Vector3 startScaleAxis, string genderTag)
+            float startScale, Vector3 startOffset, Vector3 startEuler, Vector3 startScaleAxis, string genderTag,
+            FolderImportContext folderCtx = null)
         {
             Close();
             if (attachment == null || canvas == null || buttonTemplate == null)
@@ -105,6 +135,7 @@ namespace CustomPartsMod
             panelGo.transform.SetParent(canvas, worldPositionStays: false);
 
             _current = panelGo.AddComponent<ScaleSession>();
+            _current._folderCtx = folderCtx;
             _current.BuildUi(panelGo, buttonTemplate, inputTemplate, attachment, storeKey, displayName,
                 startScale, startOffset, startEuler, startScaleAxis, genderTag);
         }
@@ -113,6 +144,10 @@ namespace CustomPartsMod
         {
             if (_current != null)
             {
+                if (_current._tPoseActive)
+                {
+                    _current.ApplyTPose(false);
+                }
                 UnityEngine.Object.Destroy(_current.gameObject);
                 _current = null;
             }
@@ -130,12 +165,20 @@ namespace CustomPartsMod
             _channel = attachment.Part != null && !string.IsNullOrEmpty(attachment.Part.ChannelId)
                 ? attachment.Part.ChannelId : ChannelMap.Primary;
             _additiveMode = attachment.Part != null ? attachment.Part.AdditiveOverride : 0;
+            _tag = attachment.Part != null && attachment.Part.Tag != null ? attachment.Part.Tag : "";
+
+            // Remember the opening placement so "Cancelar" can restore it.
+            _startScale = startScale;
+            _startOffset = startOffset;
+            _startEuler = startEuler;
+            _startScaleAxis = startScaleAxis;
 
             var rt = panelGo.GetComponent<RectTransform>();
             rt.anchorMin = new Vector2(0.5f, 1f);
             rt.anchorMax = new Vector2(0.5f, 1f);
             rt.pivot = new Vector2(0.5f, 1f);
-            rt.sizeDelta = new Vector2(480f, 492f);
+            // Folder-preview mode adds one extra full-width button row at the bottom.
+            rt.sizeDelta = new Vector2(480f, _folderCtx != null ? 614f : 566f);
             rt.anchoredPosition = _lastPanelPos; // reopen where the user last dragged it
             _panelRt = rt;
             _buttonTemplate = buttonTemplate;
@@ -164,82 +207,174 @@ namespace CustomPartsMod
             hrt.anchoredPosition = Vector2.zero;
             header.GetComponent<Image>().color = new Color(0.16f, 0.17f, 0.26f, 1f);
 
-            var hint = UiFactory.Label(panelGo.transform, "arraste para mover", fill: false);
+            // Collapse/Expand button in the header
+            var colBtn = MakeButton(buttonTemplate, header.transform, "▲", new Vector2(8f, -5f), new Vector2(30f, 30f), ToggleCollapse);
+            if (colBtn != null) _collapseBtnText = colBtn.GetComponentInChildren<TMP_Text>(true);
+
+            // Title label in the header
+            var title = UiFactory.Label(header.transform, _displayName, fill: false);
+            PlaceTopLeft(title.rectTransform, new Vector2(46f, -8f), new Vector2(250f, 22f));
+            title.enableAutoSizing = false;
+            title.fontSize = 14f;
+            title.alignment = TextAlignmentOptions.Left;
+            title.color = Color.white;
+
+            // Drag hint in the header
+            var hint = UiFactory.Label(header.transform, "arraste para mover", fill: false);
             PlaceTopLeft(hint.rectTransform, new Vector2(300f, -8f), new Vector2(170f, 22f));
             hint.enableAutoSizing = false;
-            hint.fontSize = 12f;
+            hint.fontSize = 11f;
             hint.alignment = TextAlignmentOptions.Right;
             hint.color = new Color(0.75f, 0.78f, 0.9f, 1f);
 
-            _label = UiFactory.Label(panelGo.transform, "", fill: false);
-            PlaceTopLeft(_label.rectTransform, new Vector2(10f, -6f), new Vector2(280f, 40f));
-            _label.enableAutoSizing = false;
-            _label.fontSize = 15f;
-            _label.alignment = TextAlignmentOptions.TopLeft;
+            // Tab row container
+            _tabsRowGo = new GameObject("TabsRow", typeof(RectTransform));
+            _tabsRowGo.transform.SetParent(panelGo.transform, worldPositionStays: false);
+            var trt = _tabsRowGo.GetComponent<RectTransform>();
+            trt.anchorMin = new Vector2(0f, 1f);
+            trt.anchorMax = new Vector2(1f, 1f);
+            trt.pivot = new Vector2(0.5f, 1f);
+            trt.sizeDelta = new Vector2(0f, 36f);
+            trt.anchoredPosition = new Vector2(0f, -40f);
 
+            // Create 3 tab buttons
+            _tabButtons[0] = MakeButton(buttonTemplate, _tabsRowGo.transform, "Mov/Esc", new Vector2(12f, -3f), new Vector2(148f, 30f), () => SetTab(0));
+            _tabButtons[1] = MakeButton(buttonTemplate, _tabsRowGo.transform, "Rotação", new Vector2(166f, -3f), new Vector2(148f, 30f), () => SetTab(1));
+            _tabButtons[2] = MakeButton(buttonTemplate, _tabsRowGo.transform, "Opções/3D", new Vector2(320f, -3f), new Vector2(148f, 30f), () => SetTab(2));
+
+            // Create 3 tab containers
+            _tab0Go = new GameObject("Tab0_MovEsc", typeof(RectTransform));
+            _tab0Go.transform.SetParent(panelGo.transform, worldPositionStays: false);
+            var rt0 = _tab0Go.GetComponent<RectTransform>();
+            rt0.anchorMin = new Vector2(0f, 1f); rt0.anchorMax = new Vector2(1f, 1f); rt0.pivot = new Vector2(0.5f, 1f);
+            rt0.anchoredPosition = new Vector2(0f, -76f); rt0.sizeDelta = new Vector2(0f, 220f);
+
+            _tab1Go = new GameObject("Tab1_Rot", typeof(RectTransform));
+            _tab1Go.transform.SetParent(panelGo.transform, worldPositionStays: false);
+            var rt1 = _tab1Go.GetComponent<RectTransform>();
+            rt1.anchorMin = new Vector2(0f, 1f); rt1.anchorMax = new Vector2(1f, 1f); rt1.pivot = new Vector2(0.5f, 1f);
+            rt1.anchoredPosition = new Vector2(0f, -76f); rt1.sizeDelta = new Vector2(0f, 128f);
+
+            _tab2Go = new GameObject("Tab2_Opcoes", typeof(RectTransform));
+            _tab2Go.transform.SetParent(panelGo.transform, worldPositionStays: false);
+            var rt2 = _tab2Go.GetComponent<RectTransform>();
+            rt2.anchorMin = new Vector2(0f, 1f); rt2.anchorMax = new Vector2(1f, 1f); rt2.pivot = new Vector2(0.5f, 1f);
+            rt2.anchoredPosition = new Vector2(0f, -76f); rt2.sizeDelta = new Vector2(0f, 300f);
+
+            // ==================== TAB 0: MOVE & SCALE ====================
             // Uniform scale row.
-            SmallLabel(panelGo.transform, "Escala", new Vector2(12f, -52f), new Vector2(70f, 28f));
-            _scaleField = MakeInput(inputTemplate, panelGo.transform, new Vector2(86f, -52f), new Vector2(150f, 30f),
+            SmallLabel(_tab0Go.transform, "Escala", new Vector2(12f, -12f), new Vector2(70f, 28f));
+            _scaleField = MakeInput(inputTemplate, _tab0Go.transform, new Vector2(86f, -12f), new Vector2(150f, 30f),
                 Fmt(startScale), s => { if (TryParse(s, out var v)) ApplyScale(v); RefreshFields(); });
-            MakeButton(buttonTemplate, panelGo.transform, "–", new Vector2(240f, -52f), new Vector2(44f, 30f), () => NudgeScale(1f / 1.25f));
-            MakeButton(buttonTemplate, panelGo.transform, "+", new Vector2(288f, -52f), new Vector2(44f, 30f), () => NudgeScale(1.25f));
+            MakeButton(buttonTemplate, _tab0Go.transform, "–", new Vector2(240f, -12f), new Vector2(44f, 30f), () => NudgeScale(1f / 1.25f));
+            MakeButton(buttonTemplate, _tab0Go.transform, "+", new Vector2(288f, -12f), new Vector2(44f, 30f), () => NudgeScale(1.25f));
 
-            // Per-axis scale row (P4): multiplier on top of the uniform scale, so 1/1/1 = no stretch.
-            SmallLabel(panelGo.transform, "Esc XYZ", new Vector2(12f, -90f), new Vector2(70f, 28f));
-            _sxField = MakeInput(inputTemplate, panelGo.transform, new Vector2(86f, -90f), new Vector2(120f, 30f), Fmt(startScaleAxis.x), _ => ApplyScaleAxisFromFields());
-            _syField = MakeInput(inputTemplate, panelGo.transform, new Vector2(210f, -90f), new Vector2(120f, 30f), Fmt(startScaleAxis.y), _ => ApplyScaleAxisFromFields());
-            _szField = MakeInput(inputTemplate, panelGo.transform, new Vector2(334f, -90f), new Vector2(120f, 30f), Fmt(startScaleAxis.z), _ => ApplyScaleAxisFromFields());
+            // Per-axis scale row:
+            SmallLabel(_tab0Go.transform, "Esc XYZ", new Vector2(12f, -50f), new Vector2(70f, 28f));
+            _sxField = MakeInput(inputTemplate, _tab0Go.transform, new Vector2(86f, -50f), new Vector2(120f, 30f), Fmt(startScaleAxis.x), _ => ApplyScaleAxisFromFields());
+            _syField = MakeInput(inputTemplate, _tab0Go.transform, new Vector2(210f, -50f), new Vector2(120f, 30f), Fmt(startScaleAxis.y), _ => ApplyScaleAxisFromFields());
+            _szField = MakeInput(inputTemplate, _tab0Go.transform, new Vector2(334f, -50f), new Vector2(120f, 30f), Fmt(startScaleAxis.z), _ => ApplyScaleAxisFromFields());
 
-            // Rotation row (P5): degrees around X/Y/Z, relative to the bone.
-            SmallLabel(panelGo.transform, "Rotação", new Vector2(12f, -128f), new Vector2(70f, 28f));
-            _rxField = MakeInput(inputTemplate, panelGo.transform, new Vector2(86f, -128f), new Vector2(120f, 30f), Fmt(startEuler.x), _ => ApplyEulerFromFields());
-            _ryField = MakeInput(inputTemplate, panelGo.transform, new Vector2(210f, -128f), new Vector2(120f, 30f), Fmt(startEuler.y), _ => ApplyEulerFromFields());
-            _rzField = MakeInput(inputTemplate, panelGo.transform, new Vector2(334f, -128f), new Vector2(120f, 30f), Fmt(startEuler.z), _ => ApplyEulerFromFields());
+            // Mirror/Invert Row
+            SmallLabel(_tab0Go.transform, "Espelhar", new Vector2(12f, -88f), new Vector2(70f, 28f));
+            MakeButton(buttonTemplate, _tab0Go.transform, "Inverter X", new Vector2(86f, -88f), new Vector2(120f, 30f), () => InvertScaleAxis(0));
+            MakeButton(buttonTemplate, _tab0Go.transform, "Inverter Y", new Vector2(210f, -88f), new Vector2(120f, 30f), () => InvertScaleAxis(1));
+            MakeButton(buttonTemplate, _tab0Go.transform, "Inverter Z", new Vector2(334f, -88f), new Vector2(120f, 30f), () => InvertScaleAxis(2));
 
             // Position row.
-            SmallLabel(panelGo.transform, "Posição", new Vector2(12f, -166f), new Vector2(70f, 28f));
-            _xField = MakeInput(inputTemplate, panelGo.transform, new Vector2(86f, -166f), new Vector2(120f, 30f), Fmt(startOffset.x), _ => ApplyOffsetFromFields());
-            _yField = MakeInput(inputTemplate, panelGo.transform, new Vector2(210f, -166f), new Vector2(120f, 30f), Fmt(startOffset.y), _ => ApplyOffsetFromFields());
-            _zField = MakeInput(inputTemplate, panelGo.transform, new Vector2(334f, -166f), new Vector2(120f, 30f), Fmt(startOffset.z), _ => ApplyOffsetFromFields());
+            SmallLabel(_tab0Go.transform, "Posição", new Vector2(12f, -126f), new Vector2(70f, 28f));
+            _xField = MakeInput(inputTemplate, _tab0Go.transform, new Vector2(86f, -126f), new Vector2(120f, 30f), Fmt(startOffset.x), _ => ApplyOffsetFromFields());
+            _yField = MakeInput(inputTemplate, _tab0Go.transform, new Vector2(210f, -126f), new Vector2(120f, 30f), Fmt(startOffset.y), _ => ApplyOffsetFromFields());
+            _zField = MakeInput(inputTemplate, _tab0Go.transform, new Vector2(334f, -126f), new Vector2(120f, 30f), Fmt(startOffset.z), _ => ApplyOffsetFromFields());
 
-            // Fine position nudge row: – / + per axis, stepping by an ADJUSTABLE "Passo" (default 0.05),
-            // so the user isn't forced to type tiny 0.0x values by hand.
-            SmallLabel(panelGo.transform, "Passo", new Vector2(12f, -204f), new Vector2(44f, 28f));
-            _stepField = MakeInput(inputTemplate, panelGo.transform, new Vector2(58f, -204f), new Vector2(48f, 30f), "0.05", null);
-            MakeButton(buttonTemplate, panelGo.transform, "X–", new Vector2(112f, -204f), new Vector2(42f, 30f), () => NudgePos(0, -1f));
-            MakeButton(buttonTemplate, panelGo.transform, "X+", new Vector2(156f, -204f), new Vector2(42f, 30f), () => NudgePos(0, +1f));
-            MakeButton(buttonTemplate, panelGo.transform, "Y–", new Vector2(206f, -204f), new Vector2(42f, 30f), () => NudgePos(1, -1f));
-            MakeButton(buttonTemplate, panelGo.transform, "Y+", new Vector2(250f, -204f), new Vector2(42f, 30f), () => NudgePos(1, +1f));
-            MakeButton(buttonTemplate, panelGo.transform, "Z–", new Vector2(300f, -204f), new Vector2(42f, 30f), () => NudgePos(2, -1f));
-            MakeButton(buttonTemplate, panelGo.transform, "Z+", new Vector2(344f, -204f), new Vector2(42f, 30f), () => NudgePos(2, +1f));
+            // Fine position nudge row
+            SmallLabel(_tab0Go.transform, "Passo", new Vector2(12f, -164f), new Vector2(44f, 28f));
+            _stepField = MakeInput(inputTemplate, _tab0Go.transform, new Vector2(58f, -164f), new Vector2(48f, 30f), "0.05", null);
+            MakeButton(buttonTemplate, _tab0Go.transform, "X–", new Vector2(112f, -164f), new Vector2(42f, 30f), () => NudgePos(0, -1f));
+            MakeButton(buttonTemplate, _tab0Go.transform, "X+", new Vector2(156f, -164f), new Vector2(42f, 30f), () => NudgePos(0, +1f));
+            MakeButton(buttonTemplate, _tab0Go.transform, "Y–", new Vector2(206f, -164f), new Vector2(42f, 30f), () => NudgePos(1, -1f));
+            MakeButton(buttonTemplate, _tab0Go.transform, "Y+", new Vector2(250f, -164f), new Vector2(42f, 30f), () => NudgePos(1, +1f));
+            MakeButton(buttonTemplate, _tab0Go.transform, "Z–", new Vector2(300f, -164f), new Vector2(42f, 30f), () => NudgePos(2, -1f));
+            MakeButton(buttonTemplate, _tab0Go.transform, "Z+", new Vector2(344f, -164f), new Vector2(42f, 30f), () => NudgePos(2, +1f));
 
-            // Paint channel (P2): which colour picker paints this part. Auto-set by category on
-            // import; this row lets the user correct it (e.g. force skin instead of clothing) and it
-            // persists per model. One wide button cycling through the friendly channel names.
-            _channelBtn = MakeButton(buttonTemplate, panelGo.transform, ChannelLabelFor(_channel), new Vector2(12f, -246f), new Vector2(456f, 34f), CycleChannel);
+            // ==================== TAB 1: ROTATION ====================
+            // Rotation row
+            SmallLabel(_tab1Go.transform, "Rotação", new Vector2(12f, -12f), new Vector2(70f, 28f));
+            _rxField = MakeInput(inputTemplate, _tab1Go.transform, new Vector2(86f, -12f), new Vector2(120f, 30f), Fmt(startEuler.x), _ => ApplyEulerFromFields());
+            _ryField = MakeInput(inputTemplate, _tab1Go.transform, new Vector2(210f, -12f), new Vector2(120f, 30f), Fmt(startEuler.y), _ => ApplyEulerFromFields());
+            _rzField = MakeInput(inputTemplate, _tab1Go.transform, new Vector2(334f, -12f), new Vector2(120f, 30f), Fmt(startEuler.z), _ => ApplyEulerFromFields());
 
-            // Gender (P3). (Texture variants moved to the top-center VariantBar, shown on selection.)
-            _genderBtn = MakeButton(buttonTemplate, panelGo.transform, GenderLabelFor(_gender), new Vector2(12f, -284f), new Vector2(456f, 34f), CycleGender);
+            // Rotation nudge row
+            SmallLabel(_tab1Go.transform, "Passo°", new Vector2(12f, -50f), new Vector2(48f, 28f));
+            _rotStepField = MakeInput(inputTemplate, _tab1Go.transform, new Vector2(58f, -50f), new Vector2(48f, 30f), "15", null);
+            MakeButton(buttonTemplate, _tab1Go.transform, "RX–", new Vector2(112f, -50f), new Vector2(42f, 30f), () => NudgeRot(0, -1f));
+            MakeButton(buttonTemplate, _tab1Go.transform, "RX+", new Vector2(156f, -50f), new Vector2(42f, 30f), () => NudgeRot(0, +1f));
+            MakeButton(buttonTemplate, _tab1Go.transform, "RY–", new Vector2(206f, -50f), new Vector2(42f, 30f), () => NudgeRot(1, -1f));
+            MakeButton(buttonTemplate, _tab1Go.transform, "RY+", new Vector2(250f, -50f), new Vector2(42f, 30f), () => NudgeRot(1, +1f));
+            MakeButton(buttonTemplate, _tab1Go.transform, "RZ–", new Vector2(300f, -50f), new Vector2(42f, 30f), () => NudgeRot(2, -1f));
+            MakeButton(buttonTemplate, _tab1Go.transform, "RZ+", new Vector2(344f, -50f), new Vector2(42f, 30f), () => NudgeRot(2, +1f));
 
-            // Attach mode (P14): accessory (adds on top, Sims-style) vs replace-the-slot vs auto-by-category.
-            _encaixeBtn = MakeButton(buttonTemplate, panelGo.transform, EncaixeLabelFor(_additiveMode), new Vector2(12f, -324f), new Vector2(456f, 34f), CycleEncaixe);
+            // Presets
+            SmallLabel(_tab1Go.transform, "Preset", new Vector2(12f, -88f), new Vector2(48f, 28f));
+            MakeButton(buttonTemplate, _tab1Go.transform, "X=0",   new Vector2( 62f, -88f), new Vector2(46f, 28f), () => SetRotAxis(0, 0f));
+            MakeButton(buttonTemplate, _tab1Go.transform, "X=90",  new Vector2(112f, -88f), new Vector2(46f, 28f), () => SetRotAxis(0, 90f));
+            MakeButton(buttonTemplate, _tab1Go.transform, "X=180", new Vector2(162f, -88f), new Vector2(50f, 28f), () => SetRotAxis(0, 180f));
+            MakeButton(buttonTemplate, _tab1Go.transform, "Y=0",   new Vector2(218f, -88f), new Vector2(46f, 28f), () => SetRotAxis(1, 0f));
+            MakeButton(buttonTemplate, _tab1Go.transform, "Y=90",  new Vector2(268f, -88f), new Vector2(46f, 28f), () => SetRotAxis(1, 90f));
+            MakeButton(buttonTemplate, _tab1Go.transform, "Y=180", new Vector2(318f, -88f), new Vector2(50f, 28f), () => SetRotAxis(1, 180f));
+            MakeButton(buttonTemplate, _tab1Go.transform, "Zerar", new Vector2(374f, -88f), new Vector2(86f, 28f), () => { SetRotAxis(0, 0f); SetRotAxis(1, 0f); SetRotAxis(2, 0f); });
 
-            // P11 — modeling mode: a "checkbox" toggle + a row of 3 mode chips (2 move / 3 grossura /
-            // 4 rotação) that highlight the active one. Drag the part in the preview to manipulate it.
-            _modelBtn = MakeButton(buttonTemplate, panelGo.transform, "", new Vector2(12f, -364f), new Vector2(456f, 30f), ToggleModeling);
-            _modeChips[0] = MakeButton(buttonTemplate, panelGo.transform, ModeLabels[0], new Vector2(12f, -400f), new Vector2(145f, 30f), () => SetMode(0));
-            _modeChips[1] = MakeButton(buttonTemplate, panelGo.transform, ModeLabels[1], new Vector2(167f, -400f), new Vector2(145f, 30f), () => SetMode(1));
-            _modeChips[2] = MakeButton(buttonTemplate, panelGo.transform, ModeLabels[2], new Vector2(322f, -400f), new Vector2(145f, 30f), () => SetMode(2));
+            // ==================== TAB 2: OPTIONS & 3D ====================
+            _channelBtn = MakeButton(buttonTemplate, _tab2Go.transform, ChannelLabelFor(_channel), new Vector2(12f, -12f), new Vector2(456f, 34f), CycleChannel);
+            _genderBtn = MakeButton(buttonTemplate, _tab2Go.transform, GenderLabelFor(_gender), new Vector2(12f, -50f), new Vector2(456f, 34f), CycleGender);
+            _encaixeBtn = MakeButton(buttonTemplate, _tab2Go.transform, EncaixeLabelFor(_additiveMode), new Vector2(12f, -90f), new Vector2(456f, 34f), CycleEncaixe);
+
+            // Modeling
+            _modelBtn = MakeButton(buttonTemplate, _tab2Go.transform, "", new Vector2(12f, -130f), new Vector2(456f, 30f), ToggleModeling);
+            _modeChips[0] = MakeButton(buttonTemplate, _tab2Go.transform, ModeLabels[0], new Vector2(12f, -166f), new Vector2(145f, 30f), () => SetMode(0));
+            _modeChips[1] = MakeButton(buttonTemplate, _tab2Go.transform, ModeLabels[1], new Vector2(167f, -166f), new Vector2(145f, 30f), () => SetMode(1));
+            _modeChips[2] = MakeButton(buttonTemplate, _tab2Go.transform, ModeLabels[2], new Vector2(322f, -166f), new Vector2(145f, 30f), () => SetMode(2));
             RefreshModelingUi();
 
-            // Save-as-default (persist) vs apply-once (temporary) — P6.
-            MakeButton(buttonTemplate, panelGo.transform, "Salvar padrão", new Vector2(12f, -440f), new Vector2(220f, 40f), Confirm);
-            MakeButton(buttonTemplate, panelGo.transform, "Só desta vez", new Vector2(242f, -440f), new Vector2(220f, 40f), ApplyOnce);
+            // Default & TPose
+            _catDefaultBtn = MakeButton(buttonTemplate, _tab2Go.transform, "", new Vector2(12f, -206f), new Vector2(220f, 30f), ToggleCategoryDefault);
+            RefreshCategoryDefaultUi();
+            _tPoseBtn = MakeButton(buttonTemplate, _tab2Go.transform, "", new Vector2(242f, -206f), new Vector2(220f, 30f), ToggleTPose);
+            RefreshTPoseUi();
+
+            // Tag (P10) — change this model's tag/theme from the edit panel. Type a name and "Aplicar",
+            // or "Sem tag" to clear it. Persists immediately (survives reload) even without Confirmar.
+            SmallLabel(_tab2Go.transform, "Tag", new Vector2(12f, -246f), new Vector2(44f, 28f));
+            _tagField = MakeInput(inputTemplate, _tab2Go.transform, new Vector2(58f, -246f), new Vector2(190f, 30f), _tag, null);
+            MakeButton(buttonTemplate, _tab2Go.transform, "Aplicar", new Vector2(252f, -246f), new Vector2(104f, 30f), ApplyTag);
+            MakeButton(buttonTemplate, _tab2Go.transform, "Sem tag", new Vector2(360f, -246f), new Vector2(108f, 30f), ClearTag);
+
+            // ==================== CONFIRM / CANCEL ROW ====================
+            _confirmRowGo = new GameObject("ConfirmRow", typeof(RectTransform));
+            _confirmRowGo.transform.SetParent(panelGo.transform, worldPositionStays: false);
+            var crt = _confirmRowGo.GetComponent<RectTransform>();
+            crt.anchorMin = new Vector2(0f, 1f); crt.anchorMax = new Vector2(1f, 1f); crt.pivot = new Vector2(0.5f, 1f);
+            crt.sizeDelta = new Vector2(0f, _folderCtx != null ? 100f : 56f);
+
+            var confirmBtn = MakeButton(buttonTemplate, _confirmRowGo.transform, _folderCtx != null ? "Confirmar (só esta)" : "Confirmar",
+                new Vector2(12f, -10f), new Vector2(220f, 40f), Confirm);
+            var cancelBtn = MakeButton(buttonTemplate, _confirmRowGo.transform, "Cancelar", new Vector2(242f, -10f), new Vector2(220f, 40f), Cancel);
+
+            if (_folderCtx != null)
+            {
+                int total = Mathf.Max(1, _folderCtx.TotalCount);
+                var folderBtn = MakeButton(buttonTemplate, _confirmRowGo.transform,
+                    Loc.T("Aplicar a toda a pasta") + " (" + total + ")",
+                    new Vector2(12f, -54f), new Vector2(456f, 40f), ApplyToFolder);
+            }
 
             ApplyScale(startScale);
             _attachment.SetUserScaleAxis(startScaleAxis);
             _attachment.SetUserOffset(startOffset);
             _attachment.SetUserEuler(startEuler);
+
+            // Select first tab by default & layout
+            SetTab(0);
             RefreshLabel();
         }
 
@@ -267,6 +402,27 @@ namespace CustomPartsMod
             float z = TryParse(_szField?.input.text, out var vz) ? vz : cur.z;
             _attachment.SetUserScaleAxis(new Vector3(x, y, z));
             RefreshLabel();
+        }
+
+        private void InvertScaleAxis(int axis)
+        {
+            if (_attachment == null) return;
+            Vector3 s = _attachment.UserScaleAxis;
+            if (axis == 0) s.x = -s.x;
+            else if (axis == 1) s.y = -s.y;
+            else if (axis == 2) s.z = -s.z;
+            _attachment.SetUserScaleAxis(s);
+            RefreshScaleAxisFields();
+            RefreshLabel();
+        }
+
+        private void RefreshScaleAxisFields()
+        {
+            if (_attachment == null) return;
+            Vector3 s = _attachment.UserScaleAxis;
+            _sxField?.SetValueWithoutNotify(Fmt(s.x));
+            _syField?.SetValueWithoutNotify(Fmt(s.y));
+            _szField?.SetValueWithoutNotify(Fmt(s.z));
         }
 
         private void ApplyEulerFromFields()
@@ -309,6 +465,37 @@ namespace CustomPartsMod
         {
             if (TryParse(_stepField?.input.text, out var v) && v > 1e-5f) return v;
             return 0.05f;
+        }
+
+        private void NudgeRot(int axis, float dir)
+        {
+            if (_attachment == null) return;
+            float step = RotStep();
+            Vector3 e = _attachment.UserEuler;
+            if (axis == 0) e.x += dir * step;
+            else if (axis == 1) e.y += dir * step;
+            else e.z += dir * step;
+            _attachment.SetUserEuler(e);
+            RefreshRotationFields();
+            RefreshLabel();
+        }
+
+        private float RotStep()
+        {
+            if (TryParse(_rotStepField?.input.text, out var v) && v > 1e-3f) return v;
+            return 15f;
+        }
+
+        private void SetRotAxis(int axis, float degrees)
+        {
+            if (_attachment == null) return;
+            Vector3 e = _attachment.UserEuler;
+            if (axis == 0) e.x = degrees;
+            else if (axis == 1) e.y = degrees;
+            else e.z = degrees;
+            _attachment.SetUserEuler(e);
+            RefreshRotationFields();
+            RefreshLabel();
         }
 
         private void RefreshOffsetFields()
@@ -390,57 +577,293 @@ namespace CustomPartsMod
         private static string EncaixeLabelFor(int mode)
             => EncaixeLabels[mode < 0 || mode >= EncaixeLabels.Length ? 0 : mode];
 
+        /// <summary>P10 — set this part's tag from the typed field. Updates the live part, persists it to
+        /// scales.json immediately (so it survives reload even without Confirmar), registers the tag so
+        /// its chip appears in the tag bar, and refreshes the tab so the tag filter re-evaluates.</summary>
+        private void ApplyTag()
+        {
+            if (_attachment == null || _attachment.Part == null) return;
+            string t = _tagField != null && _tagField.input != null ? (_tagField.input.text ?? "").Trim() : "";
+            SetTag(t);
+            if (!string.IsNullOrEmpty(t)) TagManager.NoteTag(t);
+            Compat.ShowSuccess(string.IsNullOrEmpty(t)
+                ? Loc.T("Tag removida.")
+                : Loc.T("Tag aplicada:") + " " + t);
+        }
+
+        /// <summary>P10 — clear this part's tag.</summary>
+        private void ClearTag()
+        {
+            if (_attachment == null || _attachment.Part == null) return;
+            SetTag("");
+            _tagField?.SetValueWithoutNotify("");
+            Compat.ShowSuccess(Loc.T("Tag removida."));
+        }
+
+        private void SetTag(string t)
+        {
+            _tag = t ?? "";
+            _attachment.Part.Tag = _tag;
+            if (!string.IsNullOrEmpty(_attachment.Part.SourceKey))
+                ScaleStore.TryUpdateTag(_attachment.Part.SourceKey, _tag);
+
+            var creator = UniqueMono<CharacterCreator>.instance;
+            if (creator != null && creator.itemTabsLoader != null) creator.itemTabsLoader.Refresh();
+        }
+
+        /// <summary>Writes this part's exact placement (per-model record) and photographs it for the tab
+        /// icon. Shared by "Confirmar" and the folder-apply path (the previewed piece is committed the
+        /// same way a single import would be).</summary>
+        private void PersistPerModel()
+        {
+            if (_attachment == null) return;
+            var p = _attachment.Part;
+
+            // Per-model: exact absolute scale/axis/rotation/offset/gender/texture + enough to
+            // REBUILD it next session (model path, category, slot). Reload reproduces it exactly.
+            ScaleStore.Set(_storeKey, new PartTransform
+            {
+                scale = _attachment.UserScale,
+                scaleAxis = _attachment.UserScaleAxis,
+                offset = _attachment.UserOffset,
+                euler = _attachment.UserEuler,
+                gender = _gender,
+                channel = _channel,
+                texturePath = _texturePath,
+                textureVariants = p != null ? p.TextureVariants.ToArray() : null,
+                activeVariant = p != null ? p.ActiveVariant : 0,
+                modelPath = p != null ? p.ModelPath : null,
+                category = p != null ? p.CategoryPath : null,
+                slot = p != null ? p.Slot.ToString() : null,
+                additive = _additiveMode, // P14 attach-mode override
+                tag = p != null ? p.Tag : null, // P10 user tag
+                link = p != null ? p.LinkGroupId : null,
+            });
+
+            // P7 — photograph just this part (framed on it) and use it as the tab-button icon, then
+            // repaint the button so the picture shows immediately.
+            Thumbnailer.Capture(_attachment);
+            var creator = UniqueMono<CharacterCreator>.instance;
+            if (creator != null && creator.itemTabsLoader != null) creator.itemTabsLoader.Refresh();
+        }
+
+        /// <summary>Mass-import preview: commit the previewed piece, then import every remaining .obj in
+        /// the folder using the values the user just dialed in here (scale multiplier, per-axis, rotation,
+        /// position, gender, channel). No per-part editing needed afterwards.</summary>
+        private void ApplyToFolder()
+        {
+            if (_attachment == null || _folderCtx == null) { Close(); return; }
+
+            var p = _attachment.Part;
+            PersistPerModel(); // the previewed piece is committed like a normal single import
+
+            // Store scale as a MULTIPLIER over each mesh's normalized base so it carries to the other
+            // (possibly differently-sized) models in the folder and still lands visible.
+            float baseN = p != null ? p.NormalizedScale : 0f;
+            float mult = baseN > 1e-6f ? _attachment.UserScale / baseN : 1f;
+            var settings = new MassImportSettings
+            {
+                ScaleMultiplier = mult,
+                ScaleAxis = _attachment.UserScaleAxis,
+                Euler = _attachment.UserEuler,
+                Offset = _attachment.UserOffset,
+                Gender = _gender,
+                Channel = _channel,
+                SideLeft = _folderCtx.SideLeft,
+            };
+
+            var ctx = _folderCtx;
+            Close();
+            MassImportFlow.ImportRemaining(ctx, settings);
+        }
+
         private void Confirm()
         {
             if (_attachment != null)
             {
                 var p = _attachment.Part;
 
-                // Per-model: exact absolute scale/axis/rotation/offset/gender/texture + enough to
-                // REBUILD it next session (model path, category, slot). Reload reproduces it exactly.
-                ScaleStore.Set(_storeKey, new PartTransform
-                {
-                    scale = _attachment.UserScale,
-                    scaleAxis = _attachment.UserScaleAxis,
-                    offset = _attachment.UserOffset,
-                    euler = _attachment.UserEuler,
-                    gender = _gender,
-                    channel = _channel,
-                    texturePath = _texturePath,
-                    textureVariants = p != null ? p.TextureVariants.ToArray() : null,
-                    activeVariant = p != null ? p.ActiveVariant : 0,
-                    modelPath = p != null ? p.ModelPath : null,
-                    category = p != null ? p.CategoryPath : null,
-                    slot = p != null ? p.Slot.ToString() : null,
-                    additive = _additiveMode, // P14 attach-mode override
-                    tag = p != null ? p.Tag : null, // P10 user tag
-                });
+                PersistPerModel();
 
-                // Scale as a MULTIPLIER over this mesh's normalized base, so it carries to the next
-                // (possibly differently-scaled) model correctly.
+                // Scale is stored as a MULTIPLIER over this mesh's normalized base, so it carries to the
+                // next (possibly differently-scaled) model correctly and always lands visible. Where it
+                // goes depends on the checkbox: ticked pins the CATEGORY default (overrides the global
+                // for this tab); left unticked (re)calibrates the GLOBAL factor for every future import.
                 float baseN = p != null ? p.NormalizedScale : 0f;
                 float mult = baseN > 1e-6f ? _attachment.UserScale / baseN : 1f;
-                ScaleStore.SetLast(mult, _attachment.UserOffset);
+                if (_saveCategoryDefault && p != null)
+                {
+                    ScaleStore.SetCategoryDefault(p.CategoryPath, p.Slot, _gender, mult,
+                        _attachment.UserScaleAxis, _attachment.UserEuler, _attachment.UserOffset);
+                    Compat.ShowSuccess(Loc.T("Padrão desta categoria salvo — novos modelos deste tipo virão assim.") + " (" + _displayName + ")");
+                }
+                else
+                {
+                    ScaleStore.SetGlobalMult(mult, _attachment.UserOffset);
+                    Compat.ShowSuccess(Loc.T("Escala confirmada e definida como padrão global.") + " (" + _displayName + ")");
+                }
 
-                // Category default (per tab): every NEW model imported into this same tab (e.g. all heads)
-                // will start from these placement values.
+                // Apply changes live to any other characters currently on the map wearing this exact same part.
+                // We update both: (a) our live CustomBodyPartAttachment objects via SetUser*, and
+                // (b) the underlying CustomPart metadata (already done in SetUser*), so any future
+                // AddPart rebuild uses the new values.
                 if (p != null)
-                    ScaleStore.SetCategoryDefault(p.CategoryPath, mult, _attachment.UserScaleAxis, _attachment.UserEuler, _attachment.UserOffset);
-
-                Compat.ShowSuccess(Loc.T("Padrão salvo — novos modelos desta categoria virão assim.") + " (" + _displayName + ")");
-
-                // P7 — snapshot just this part (framed on it) and use it as the tab-button icon.
-                Thumbnailer.Capture(_attachment);
+                {
+                    var allParts = FindObjectsOfType<CustomBodyPartAttachment>();
+                    int updated = 0;
+                    foreach (var part in allParts)
+                    {
+                        if (part != _attachment && part.Part != null && part.Part.SourceKey == p.SourceKey)
+                        {
+                            part.SetUserScale(_attachment.UserScale);
+                            part.SetUserScaleAxis(_attachment.UserScaleAxis);
+                            part.SetUserEuler(_attachment.UserEuler);
+                            part.SetUserOffset(_attachment.UserOffset);
+                            updated++;
+                        }
+                    }
+                    Plugin.Log.LogInfo($"[confirm] Updated {updated} other instance(s) of '{p.SourceKey}' on the map (found {allParts.Length} total attachments).");
+                }
             }
             Close();
         }
 
-        /// <summary>P6 "só desta vez": keep the live-applied values on this instance but do NOT
-        /// persist — the next re-import of the same file reverts to the saved default.</summary>
-        private void ApplyOnce()
+        /// <summary>Revert the live instance to the values the panel opened with and close — nothing is
+        /// persisted (the part stays imported; use the trash button to remove it).</summary>
+        private void Cancel()
         {
-            Compat.ShowSuccess(Loc.T("Aplicado só nesta sessão:") + " " + _displayName);
+            if (_attachment != null)
+            {
+                _attachment.SetUserScale(_startScale);
+                _attachment.SetUserScaleAxis(_startScaleAxis);
+                _attachment.SetUserOffset(_startOffset);
+                _attachment.SetUserEuler(_startEuler);
+            }
             Close();
+        }
+
+        private void ToggleCategoryDefault()
+        {
+            _saveCategoryDefault = !_saveCategoryDefault;
+            RefreshCategoryDefaultUi();
+        }
+
+        private void RefreshCategoryDefaultUi()
+        {
+            if (_catDefaultBtn == null) return;
+            var t = _catDefaultBtn.GetComponentInChildren<TMP_Text>(true);
+            if (t != null)
+                t.text = Loc.T(_saveCategoryDefault
+                    ? "[X] Salvar como padrão desta categoria"
+                    : "[ ] Salvar como padrão desta categoria");
+            var img = _catDefaultBtn.GetComponent<Image>();
+            if (img != null) img.color = _saveCategoryDefault ? ModelOn : ModelOff;
+        }
+
+        private void ToggleTPose()
+        {
+            _tPoseActive = !_tPoseActive;
+            ApplyTPose(_tPoseActive);
+            RefreshTPoseUi();
+        }
+
+        private void ApplyTPose(bool active)
+        {
+            var character = _attachment != null ? _attachment.GetComponentInParent<PickupableCharacter>() : null;
+            if (character == null) return;
+            var animator = character.GetComponentInChildren<Animator>();
+            if (animator != null)
+            {
+                animator.enabled = !active;
+                if (active)
+                {
+                    animator.Rebind();
+                }
+            }
+        }
+
+        private void RefreshTPoseUi()
+        {
+            if (_tPoseBtn == null) return;
+            var t = _tPoseBtn.GetComponentInChildren<TMP_Text>(true);
+            if (t != null) t.text = Loc.T(_tPoseActive ? "[X] Pose T ativa" : "[ ] Forçar Pose T");
+            var img = _tPoseBtn.GetComponent<Image>();
+            if (img != null) img.color = _tPoseActive ? ModelOn : ModelOff;
+        }
+
+        private void ToggleCollapse()
+        {
+            _collapsed = !_collapsed;
+            RefreshPanelLayout();
+        }
+
+        private void SetTab(int tabIndex)
+        {
+            _activeTab = tabIndex;
+            for (int i = 0; i < 3; i++)
+            {
+                if (_tabButtons[i] != null)
+                {
+                    var img = _tabButtons[i].GetComponent<Image>();
+                    if (img != null) img.color = (i == _activeTab) ? ChipActive : ChipIdle;
+                }
+            }
+            RefreshPanelLayout();
+        }
+
+        private void RefreshPanelLayout()
+        {
+            if (_panelRt == null) return;
+
+            float contentHeight = 220f;
+            if (_collapsed)
+            {
+                contentHeight = 0f;
+            }
+            else
+            {
+                if (_activeTab == 0) contentHeight = 206f; // Tab 0 has inputs up to -164 (164 + 30 + 12 = 206)
+                else if (_activeTab == 1) contentHeight = 128f; // Tab 1 has inputs up to -88 (88 + 28 + 12 = 128)
+                else contentHeight = 288f; // Tab 2 has inputs up to -246 (246 + 30 + 12 = 288)
+            }
+
+            float totalHeight = 40f; // Header
+            if (!_collapsed)
+            {
+                totalHeight += 36f; // Tabs row
+                totalHeight += contentHeight; // Content
+                totalHeight += 12f; // spacing
+                totalHeight += 56f; // Confirm/Cancel row (height 40 + 16 spacing)
+                if (_folderCtx != null)
+                {
+                    totalHeight += 44f; // Apply to folder row
+                }
+            }
+
+            _panelRt.sizeDelta = new Vector2(480f, totalHeight);
+
+            // Hide/show tab row and containers
+            if (_tabsRowGo != null) _tabsRowGo.SetActive(!_collapsed);
+            if (_tab0Go != null) _tab0Go.SetActive(!_collapsed && _activeTab == 0);
+            if (_tab1Go != null) _tab1Go.SetActive(!_collapsed && _activeTab == 1);
+            if (_tab2Go != null) _tab2Go.SetActive(!_collapsed && _activeTab == 2);
+            if (_confirmRowGo != null) _confirmRowGo.SetActive(!_collapsed);
+
+            if (!_collapsed)
+            {
+                // Position confirm row container at the bottom
+                var crt = _confirmRowGo.GetComponent<RectTransform>();
+                if (crt != null)
+                {
+                    crt.sizeDelta = new Vector2(0f, _folderCtx != null ? 100f : 56f);
+                    crt.anchoredPosition = new Vector2(0f, -(40f + 36f + contentHeight + 12f));
+                }
+            }
+
+            if (_collapseBtnText != null)
+            {
+                _collapseBtnText.text = _collapsed ? "▼" : "▲";
+            }
         }
 
         // ---- P11 modeling mode (drag the part in the preview) ----
@@ -451,13 +874,11 @@ namespace CustomPartsMod
             {
                 if (!ResolvePreview()) { Compat.ShowError("Não achei o preview do personagem para modelar."); return; }
                 _modeling = true;
-                CreateBlocker();
             }
             else
             {
                 _modeling = false;
                 _dragging = false;
-                DestroyBlocker();
             }
             RefreshModelingUi();
         }
@@ -500,37 +921,6 @@ namespace CustomPartsMod
             return true;
         }
 
-        /// <summary>Transparent UiButton over the preview: it becomes the frontmost UiButton so SlickUi
-        /// routes presses to it (doing nothing) instead of the preview panel behind (which rotates the
-        /// camera). Placed as the FIRST child so it sits over the render texture but under the arrows.</summary>
-        private void CreateBlocker()
-        {
-            if (_blocker != null || _buttonTemplate == null || _previewRect == null) return;
-            var go = UnityEngine.Object.Instantiate(_buttonTemplate, _previewRect);
-            go.name = "ModelingDragBlocker";
-
-            var btn = go.GetComponent<UiButton>();
-            if (btn != null)
-                try { btn.onLeftMouseClick.RemoveAllListeners(); btn.whileMouseDrag.RemoveAllListeners(); btn.whileLeftMouseHeld.RemoveAllListeners(); } catch { }
-
-            var brt = go.GetComponent<RectTransform>();
-            if (brt != null) { brt.anchorMin = Vector2.zero; brt.anchorMax = Vector2.one; brt.offsetMin = Vector2.zero; brt.offsetMax = Vector2.zero; }
-
-            var img = go.GetComponent<Image>();
-            if (img != null) { img.sprite = null; img.color = new Color(0f, 0f, 0f, 0f); img.raycastTarget = true; }
-            foreach (var i in go.GetComponentsInChildren<Image>(true)) if (i.gameObject != go) i.enabled = false;
-            foreach (var raw in go.GetComponentsInChildren<RawImage>(true)) raw.enabled = false;
-            foreach (var t in go.GetComponentsInChildren<TMP_Text>(true)) t.enabled = false;
-
-            go.transform.SetAsFirstSibling();
-            _blocker = go;
-        }
-
-        private void DestroyBlocker()
-        {
-            if (_blocker != null) { UnityEngine.Object.Destroy(_blocker); _blocker = null; }
-        }
-
         private void HandleModelingDrag()
         {
             if (_attachment == null || _previewCam == null || _previewRect == null) return;
@@ -543,21 +933,35 @@ namespace CustomPartsMod
                 {
                     _dragging = true;
                     _lastMouse = mouse;
+                    _dragStartMouse = mouse;
+                    _dragLockedAxis = -1;
                 }
             }
             else if (Input.GetMouseButtonUp(0))
             {
                 _dragging = false;
+                _dragLockedAxis = -1;
             }
 
             if (!_dragging || !Input.GetMouseButton(0)) return;
+
+            // Lock axis based on dominant direction if not locked yet
+            if (_dragLockedAxis == -1)
+            {
+                Vector2 totalDelta = (Vector2)mouse - (Vector2)_dragStartMouse;
+                if (totalDelta.magnitude > 5f) // 5 pixels threshold
+                {
+                    _dragLockedAxis = Mathf.Abs(totalDelta.x) > Mathf.Abs(totalDelta.y) ? 0 : 1;
+                }
+            }
+
             Vector2 d = (Vector2)mouse - (Vector2)_lastMouse;
             if (d.sqrMagnitude < 1e-4f) return;
 
             switch (_mode)
             {
                 case 0: DragMove(_lastMouse, mouse); break;
-                case 1: DragScale(d.y); break;
+                case 1: DragScale(d.x, d.y); break;
                 case 2: DragRotate(d.x, d.y); break;
             }
             _lastMouse = mouse;
@@ -574,18 +978,74 @@ namespace CustomPartsMod
             RefreshLabel();
         }
 
-        private void DragScale(float dyPixels)
+        private void DragScale(float dxPixels, float dyPixels)
         {
-            ApplyScale(_attachment.UserScale * Mathf.Exp(dyPixels * 0.004f)); // drag up = thicker
-            RefreshFields();
+            if (_attachment == null || _previewCam == null) return;
+            if (_dragLockedAxis == -1) return; // wait until drag direction is locked
+
+            float dx = _dragLockedAxis == 0 ? dxPixels : 0f;
+            float dy = _dragLockedAxis == 1 ? dyPixels : 0f;
+
+            Transform t = _attachment.transform;
+            // Project camera axes into the part's local space
+            Vector3 localCamRight = t.InverseTransformDirection(_previewCam.transform.right);
+            Vector3 localCamUp = t.InverseTransformDirection(_previewCam.transform.up);
+
+            // Get absolute alignment weights for each local axis
+            Vector3 absRight = new Vector3(Mathf.Abs(localCamRight.x), Mathf.Abs(localCamRight.y), Mathf.Abs(localCamRight.z));
+            Vector3 absUp = new Vector3(Mathf.Abs(localCamUp.x), Mathf.Abs(localCamUp.y), Mathf.Abs(localCamUp.z));
+
+            // Normalize weights so the maximum weight is 1.0f
+            float maxR = Mathf.Max(absRight.x, Mathf.Max(absRight.y, absRight.z));
+            if (maxR > 0f) absRight /= maxR;
+            float maxU = Mathf.Max(absUp.x, Mathf.Max(absUp.y, absUp.z));
+            if (maxU > 0f) absUp /= maxU;
+
+            // Calculate scale multipliers
+            Vector3 currentAxis = _attachment.UserScaleAxis;
+            Vector3 nextAxis = currentAxis;
+
+            if (_dragLockedAxis == 0)
+            {
+                // Apply horizontal drag (dx) to local axes aligned with screen-horizontal (e.g. width/girth)
+                nextAxis.x *= Mathf.Exp(dx * 0.004f * absRight.x);
+                nextAxis.y *= Mathf.Exp(dx * 0.004f * absRight.y);
+                nextAxis.z *= Mathf.Exp(dx * 0.004f * absRight.z);
+            }
+            else if (_dragLockedAxis == 1)
+            {
+                // Apply vertical drag (dy) to local axes aligned with screen-vertical (e.g. height/length)
+                nextAxis.x *= Mathf.Exp(dy * 0.004f * absUp.x);
+                nextAxis.y *= Mathf.Exp(dy * 0.004f * absUp.y);
+                nextAxis.z *= Mathf.Exp(dy * 0.004f * absUp.z);
+            }
+
+            _attachment.SetUserScaleAxis(nextAxis);
+            RefreshScaleAxisFields();
+            RefreshLabel();
         }
 
         private void DragRotate(float dxPixels, float dyPixels)
         {
-            Vector3 e = _attachment.UserEuler;
-            e.y += dxPixels * 0.4f;
-            e.x += -dyPixels * 0.4f;
-            _attachment.SetUserEuler(e);
+            if (_attachment == null || _previewCam == null) return;
+
+            // Get current local rotation from UserEuler
+            Quaternion currentLocalRot = Quaternion.Euler(_attachment.UserEuler);
+            // Convert to world rotation using parent's rotation
+            Transform parent = _attachment.transform.parent;
+            Quaternion currentWorldRot = parent != null ? parent.rotation * currentLocalRot : currentLocalRot;
+
+            // Apply camera-relative delta rotation in world space
+            Vector3 camUp = _previewCam.transform.up;
+            Vector3 camRight = _previewCam.transform.right;
+            Quaternion deltaRot = Quaternion.AngleAxis(-dyPixels * 0.4f, camRight) * Quaternion.AngleAxis(dxPixels * 0.4f, camUp);
+            Quaternion newWorldRot = deltaRot * currentWorldRot;
+
+            // Convert back to local rotation
+            Quaternion newLocalRot = parent != null ? Quaternion.Inverse(parent.rotation) * newWorldRot : newWorldRot;
+
+            // Update UserEuler
+            _attachment.SetUserEuler(newLocalRot.eulerAngles);
             RefreshRotationFields();
             RefreshLabel();
         }
@@ -628,19 +1088,13 @@ namespace CustomPartsMod
             _rzField?.SetValueWithoutNotify(Fmt(e.z));
         }
 
-        private void OnDestroy() => DestroyBlocker();
+
 
         // Texture variants (P13) live in the top-center VariantBar (shown when the part is selected),
         // so the panel no longer hosts them. Confirm still persists part.TextureVariants below.
 
         private void RefreshLabel()
         {
-            if (_label == null || _attachment == null) return;
-            Vector3 o = _attachment.UserOffset;
-            Vector3 r = _attachment.UserEuler;
-            _label.text =
-                $"{_displayName}   —   escala {_attachment.UserScale:0.###}\n" +
-                $"pos ({o.x:0.##}, {o.y:0.##}, {o.z:0.##})   rot ({r.x:0.#}, {r.y:0.#}, {r.z:0.#})";
         }
 
         private void RefreshFields()
@@ -713,7 +1167,7 @@ namespace CustomPartsMod
                 || IsFocused(_sxField) || IsFocused(_syField) || IsFocused(_szField)
                 || IsFocused(_xField) || IsFocused(_yField) || IsFocused(_zField)
                 || IsFocused(_rxField) || IsFocused(_ryField) || IsFocused(_rzField)
-                || IsFocused(_stepField);
+                || IsFocused(_stepField) || IsFocused(_rotStepField) || IsFocused(_tagField);
         }
 
         private static bool IsFocused(UiInputField f) => f != null && f.input != null && f.input.isFocused;
@@ -845,5 +1299,10 @@ namespace CustomPartsMod
         }
 
         private static string Fmt(float v) => v.ToString("0.###", CultureInfo.InvariantCulture);
+
+        private void OnDestroy()
+        {
+            VariantBar.Hide();
+        }
     }
 }

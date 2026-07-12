@@ -48,20 +48,26 @@ namespace CustomPartsMod
             _buttonTemplate = buttonTemplate;
             var groups = Randomizer.Groups();
 
-            const float top = 48f, rowH = 34f, pad = 12f;
+            const float top = 48f, rowH = 34f, pad = 12f, scopeH = 24f;
             float rowsH = Mathf.Max(1, groups.Count) * rowH;
-            float height = top + rowsH + 8f + 44f + 44f; // rows + gap + Aleatorizar + Fechar
+            float height = top + scopeH + rowsH + 8f + 44f + 44f; // scope + rows + gap + Aleatorizar + Fechar
 
             _panelRt = PanelUi.BuildShell(panelGo, canvas, buttonTemplate,
                 new Vector2(360f, height), _lastPanelPos, "Aleatório (só peças custom)");
 
+            // Scope line: makes it obvious the roll is limited to the selected tag (if any).
+            string scope = TagManager.FilterActive
+                ? "Sorteando na tag: " + TagManager.SelectedTag
+                : "Sorteando: todas as tags";
+            PanelUi.SmallLabel(panelGo.transform, scope, new Vector2(pad, -top), new Vector2(336f, 20f));
+
             if (groups.Count == 0)
             {
                 PanelUi.SmallLabel(panelGo.transform, "Importe peças custom primeiro.",
-                    new Vector2(pad, -top), new Vector2(336f, 28f));
+                    new Vector2(pad, -top - scopeH), new Vector2(336f, 28f));
             }
 
-            float y = -top;
+            float y = -top - scopeH;
             foreach (var g in groups)
             {
                 string key = g.Key;

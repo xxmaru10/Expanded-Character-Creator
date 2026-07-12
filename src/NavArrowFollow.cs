@@ -16,6 +16,7 @@ namespace CustomPartsMod
         public RectTransform panel;   // the preview panel rect (arrows' parent)
         public RectTransform prev, next;
         public RectTransform zoomIn, zoomOut; // optional zoom buttons, stacked below the right arrow
+        public RectTransform panUp, panDown;  // optional camera up/down buttons, stacked below the left arrow
         public float dx = 140f;
 
         private Camera _cam;
@@ -51,6 +52,10 @@ namespace CustomPartsMod
             // Zoom buttons: stacked just below the right arrow so they stay beside the arrows.
             if (zoomIn != null) zoomIn.anchoredPosition = new Vector2(cx + dx, -84f);
             if (zoomOut != null) zoomOut.anchoredPosition = new Vector2(cx + dx, -140f);
+
+            // Camera up/down: mirrored below the left arrow.
+            if (panUp != null) panUp.anchoredPosition = new Vector2(cx - dx, -84f);
+            if (panDown != null) panDown.anchoredPosition = new Vector2(cx - dx, -140f);
         }
     }
 }

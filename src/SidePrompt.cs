@@ -51,7 +51,12 @@ namespace CustomPartsMod
 
         internal static void Close()
         {
-            if (_panel != null) { UnityEngine.Object.Destroy(_panel); _panel = null; }
+            if (_panel != null)
+            {
+                _panel.SetActive(false);
+                UnityEngine.Object.Destroy(_panel);
+                _panel = null;
+            }
         }
     }
 }

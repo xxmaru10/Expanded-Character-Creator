@@ -64,6 +64,14 @@ namespace CustomPartsMod
             Plugin.Log.LogInfo("Barra de Tags (P10) posicionada ao lado do 'Só custom'.");
         }
 
+        /// <summary>Rebuild the current bar's chips. Called after the persistence loader registers all
+        /// saved parts (their tags only exist then) and whenever a tag is added/removed, so chips for
+        /// tags that live purely on loaded parts (e.g. a bulk-applied "ts4") actually appear.</summary>
+        internal static void Refresh()
+        {
+            if (_current != null) _current.Rebuild();
+        }
+
         private void LateUpdate() => Follow();
 
         /// <summary>Glue the bar right of the "Só custom" button, same top edge, regardless of pivot/

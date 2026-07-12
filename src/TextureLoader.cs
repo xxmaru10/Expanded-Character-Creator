@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 
@@ -62,6 +63,47 @@ namespace CustomPartsMod
                 Plugin.Log.LogWarning("Busca de textura falhou: " + e.Message);
             }
             return null;
+        }
+
+        /// <summary>
+        /// All textures that belong to a model, in variant order. Index 0 is the primary texture
+        /// (the same-named sibling, or the OBJ's .mtl map_Kd); after it come the numbered siblings
+        /// "&lt;base&gt;1", "&lt;base&gt;2", ... that the CAS Batch Exporter writes (one per colour swatch).
+        /// Probing stops at the first missing index so the list stays contiguous, matching how the
+        /// exporter numbers gap-free. Returns an empty list when nothing is found.
+        /// </summary>
+        internal static List<string> FindVariants(string modelPath)
+        {
+            var list = new List<string>();
+            try
+            {
+                if (string.IsNullOrEmpty(modelPath)) return list;
+                string dir = Path.GetDirectoryName(modelPath);
+                if (string.IsNullOrEmpty(dir)) return list;
+                string baseName = Path.GetFileNameWithoutExtension(modelPath);
+
+                // Variant 0: the primary texture (same-named PNG or the .mtl's map_Kd).
+                string primary = FindSibling(modelPath);
+                if (!string.IsNullOrEmpty(primary)) list.Add(primary);
+
+                // Variants 1..N: "<base>1.png", "<base>2.png", ... Stop at the first gap.
+                for (int i = 1; ; i++)
+                {
+                    string found = null;
+                    foreach (var ext in ImageExts)
+                    {
+                        string p = Path.Combine(dir, baseName + i + ext);
+                        if (File.Exists(p)) { found = p; break; }
+                    }
+                    if (found == null) break;
+                    if (!list.Contains(found)) list.Add(found);
+                }
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning("Busca de variantes de textura falhou: " + e.Message);
+            }
+            return list;
         }
 
         private static string MtlLibReferenced(string objPath, string dir)

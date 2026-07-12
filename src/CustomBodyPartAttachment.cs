@@ -20,6 +20,7 @@ namespace CustomPartsMod
         // Default white = pure texture; painting the part's channel multiplies the texture by the colour.
         private Material _tintMat;
         private Color _paintColor = Color.white;
+        private bool _boneResolved;
 
         /// <summary>True when this part is painted via our own tint path (textured parts).</summary>
         internal bool HasTint => _tintMat != null;
@@ -95,12 +96,53 @@ namespace CustomPartsMod
             Reapply();
         }
 
-        /// <summary>Per-axis scale is a multiplier; guard against 0/negative that would flatten the mesh.</summary>
+        private void OnEnable()
+        {
+            if (Part != null)
+            {
+                // Reload from ScaleStore to ensure we have the absolute latest values
+                // in case they were edited on a dummy clone in the Character Creator.
+                if (ScaleStore.TryGet(Part.SourceKey, out var rec))
+                {
+                    UserScale = Mathf.Clamp(rec.scale, 0.001f, 10000f);
+                    UserScaleAxis = SanitizeAxis(rec.scaleAxis);
+                    UserOffset = rec.offset;
+                    UserEuler = rec.euler;
+                    Reapply();
+                }
+            }
+        }
+
+        private void Update()
+        {
+            if (!_boneResolved && _character != null && Part != null)
+            {
+                try
+                {
+                    var bones = _character.boneHelper;
+                    if (bones != null && bones.Count > 0)
+                    {
+                        _boneResolved = true; // Stop trying after bones are ready
+                        Transform bone = BoneResolver.Resolve(_character, Part.Slot);
+                        if (bone != null && transform.parent != bone)
+                        {
+                            transform.SetParent(bone, worldPositionStays: false);
+                            transform.localEulerAngles = Vector3.zero;
+                            Reapply();
+                            Plugin.Log.LogInfo($"[late-resolve] Parented '{Part.PartId}' to bone '{bone.name}' on map load.");
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+
+        /// <summary>Per-axis scale is a multiplier; guard against 0 that would flatten the mesh.</summary>
         private static Vector3 SanitizeAxis(Vector3 a)
             => new Vector3(
-                a.x > 1e-4f ? a.x : 1f,
-                a.y > 1e-4f ? a.y : 1f,
-                a.z > 1e-4f ? a.z : 1f);
+                Mathf.Abs(a.x) > 1e-4f ? a.x : 1f,
+                Mathf.Abs(a.y) > 1e-4f ? a.y : 1f,
+                Mathf.Abs(a.z) > 1e-4f ? a.z : 1f);
 
         /// <summary>Applies a texture live (rebuilds the material with a shader that shows it).</summary>
         internal void SetTexture(Texture2D tex)
@@ -122,26 +164,55 @@ namespace CustomPartsMod
         /// </summary>
         private void Reapply()
         {
-            Transform parent = transform.parent;
-            Vector3 b = parent != null ? parent.lossyScale : Vector3.one;
-            Vector3 invB = new Vector3(1f / NonZero(b.x), 1f / NonZero(b.y), 1f / NonZero(b.z));
-
-            // Effective world-space scale = uniform UserScale * per-axis multiplier (P4).
+            // Effective local scale = uniform UserScale * per-axis multiplier (P4).
             Vector3 s = new Vector3(UserScale * UserScaleAxis.x, UserScale * UserScaleAxis.y, UserScale * UserScaleAxis.z);
             Quaternion rot = Quaternion.Euler(UserEuler); // typed rotation relative to the bone (P5)
 
-            transform.localScale = Vector3.Scale(s, invB);
+            transform.localScale = s;
             transform.localRotation = rot;
 
-            // Keep the mesh CENTER pinned at (bone + UserOffset) in world units even under
+            // Keep the mesh CENTER pinned at (bone + UserOffset) in local units even under
             // rotation/non-uniform scale, so the part scales/rotates in place instead of flying off.
-            Vector3 centerWorld = rot * Vector3.Scale(s, _meshCenter);
-            Vector3 term = UserOffset - centerWorld;
-            transform.localPosition = Vector3.Scale(term, invB);
+            Vector3 centerLocal = rot * Vector3.Scale(s, _meshCenter);
+            transform.localPosition = UserOffset - centerLocal;
+        }
+
+        /// <summary>
+        /// Clears the parts occupying <paramref name="socket"/> so a replacement base part can take its
+        /// place — but PRESERVES additive custom accessories (e.g. shoes) worn on the same socket/bone.
+        /// A calf and a shoe share the LowerLeg bone yet are independent, so replacing the calf must not
+        /// delete the shoe. Mirrors the engine's RemoveAllChildren (removes via RemovePart) but skips
+        /// additive parts. Only touches parts sitting directly on this socket/bone.
+        /// </summary>
+        private void RemoveReplaceableChildren(Transform socket, PickupableCharacter character)
+        {
+            if (socket == null || character == null || character.attachedItems == null) return;
+
+            var toRemove = new List<string>();
+            foreach (var kv in character.attachedItems)
+            {
+                var att = kv.Value;
+                if (att == null || att == this || att.transform == null) continue;
+                if (att.transform.parent != socket) continue; // only parts directly on this socket/bone
+                // Keep additive accessories (shoes, etc.) — independent of the base part on this bone.
+                if (att is CustomBodyPartAttachment cc && cc.Part != null && cc.Part.Additive) continue;
+                toRemove.Add(kv.Key);
+            }
+
+            foreach (var id in toRemove)
+            {
+                try { character.RemovePart(id); }
+                catch (System.Exception e) { Plugin.Log.LogWarning("remover no slot compartilhado: " + e.Message); }
+            }
         }
 
         internal static CustomBodyPartAttachment Build(CustomPart part, PickupableCharacter character)
         {
+            // Import the mesh + texture from disk now, on first use, if this part was rebuilt from a
+            // saved record (no OBJ is parsed at startup — see CustomPart.EnsureLoaded). No-op for fresh
+            // imports, which already carry the mesh.
+            part.EnsureLoaded();
+
             // Create the GameObject + component FIRST so this method never returns null
             // (SpawnAlongside dereferences .gameObject on the result).
             var go = new GameObject("CustomPart_" + part.PartId);
@@ -162,16 +233,22 @@ namespace CustomPartsMod
                 // Prefer the animated bone so the part follows the body; fall back to the socket.
                 Transform bone = BoneResolver.Resolve(character, part.Slot);
                 Transform parent = bone ?? attachSocket ?? character.transform;
+                attachment._boneResolved = (bone != null);
 
                 // Replace, don't stack: clear the vanilla part (under the attach socket) and any
-                // prior custom part (under the bone), the way the engine does (RemoveAllChildren).
-                // Done before parenting our own object so it is not removed too.
-                // Additive parts (eyes/accessories) skip this so they add ON TOP of the head/face
-                // instead of replacing it.
+                // prior NON-additive custom part (under the bone). Done before parenting our own object
+                // so it is not removed too. Additive parts (eyes/accessories) skip this entirely so they
+                // add ON TOP instead of replacing.
+                //
+                // IMPORTANT: this preserves ADDITIVE accessories worn on the SAME bone. A shoe and a calf
+                // both live on the LowerLeg bone (they share it — that's expected), but they are
+                // independent: changing the calf must NOT delete the shoe, and there is no calf<->shoe
+                // link. RemoveReplaceableChildren keeps additive parts; the engine's RemoveAllChildren
+                // would have deleted the shoe.
                 if (!part.Additive)
                 {
-                    if (attachSocket != null) attachment.RemoveAllChildren(attachSocket, character);
-                    if (parent != null && parent != attachSocket) attachment.RemoveAllChildren(parent, character);
+                    if (attachSocket != null) attachment.RemoveReplaceableChildren(attachSocket, character);
+                    if (parent != null && parent != attachSocket) attachment.RemoveReplaceableChildren(parent, character);
                 }
 
                 go.transform.SetParent(parent, worldPositionStays: false);
@@ -181,6 +258,15 @@ namespace CustomPartsMod
                 var filter = go.AddComponent<MeshFilter>();
                 filter.sharedMesh = part.Mesh;
                 attachment._meshCenter = part.Mesh != null ? part.Mesh.bounds.center : Vector3.zero;
+
+                // A MeshCollider so the paint brush (PaintSession) can raycast the surface and read the
+                // hit UV (RaycastHit.textureCoord only works against a MeshCollider). Convex=false keeps
+                // the exact triangle mesh. No Rigidbody needed for raycasting a static collider.
+                if (part.Mesh != null)
+                {
+                    var col = go.AddComponent<MeshCollider>();
+                    col.sharedMesh = part.Mesh;
+                }
 
                 var renderer = go.AddComponent<MeshRenderer>();
                 renderer.sharedMaterial = BuildMaterial(part, character);
@@ -222,7 +308,7 @@ namespace CustomPartsMod
             catch { /* diagnostics must never break the attach */ }
         }
 
-        private static Material BuildMaterial(CustomPart part, PickupableCharacter character)
+        internal static Material BuildMaterial(CustomPart part, PickupableCharacter character)
         {
             Material material;
 
@@ -256,6 +342,7 @@ namespace CustomPartsMod
 
         private static bool TryGetReferenceMaterial(PickupableCharacter character, out Material material)
         {
+            if (character == null || character.attachedItems == null) { material = null; return false; }
             foreach (KeyValuePair<string, CharacterAttachment> kv in character.attachedItems)
             {
                 if (kv.Value == null) continue;

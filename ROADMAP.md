@@ -7,10 +7,12 @@ Legenda de esforço: 🟢 pequeno · 🟡 médio · 🔴 grande/incerto (precisa
 
 ---
 
-## P0 — Persistência de malha entre sessões  ✅ FEITO (Iteração 9)
+## P0 — Persistência de malha entre sessões  ✅ FEITO (Iteração 9; carga preguiçosa na Iteração 30)
 - `Confirmar` salva no `scales.json` o **caminho do modelo + categoria + slot**. Na abertura do criador,
-  `PersistenceLoader.LoadAll` recarrega cada modelo salvo (malha silenciosa via `MeshImporter.ImportNew`),
-  registra na aba com escala/posição/textura. A parte **sobrevive ao reiniciar**.
+  `PersistenceLoader.LoadAll` **registra** cada modelo salvo só pelos metadados (sem tocar o disco além
+  de um `File.Exists`); a malha + textura são importadas **preguiçosamente** por `CustomPart.EnsureLoaded`
+  na primeira vez que a peça é aplicada (Iteração 30). A parte **sobrevive ao reiniciar** e abrir o
+  Criador é rápido mesmo com **milhares** de peças salvas.
 - **Limitações:** só OBJ/STL no reload (GLB pendente — precisa do caminho async); registros antigos
   (pré-P0, sem caminho salvo) precisam de **um** Confirmar novo pra virarem persistentes.
 - **Alternativa futura:** pasta drop-in `CustomParts\<Categoria>\` varrida no início (Fase 2 do DESIGN).

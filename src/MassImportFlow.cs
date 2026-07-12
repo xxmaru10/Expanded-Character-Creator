@@ -11,9 +11,10 @@ using RiggedAttachType = RpgEngine.Characters.CharacterCreatorEnums.RiggedAttach
 
 namespace CustomPartsMod
 {
-    /// <summary>Conventions the user fixes once (MassImportConfig) and every model in the folder
-    /// inherits — gender filter, paint channel, uniform scale ×, per-axis scale, rotation, position.
-    /// Texture is excluded (paired automatically per model).</summary>
+    /// <summary>Conventions every model in the folder inherits — gender filter, paint channel, uniform
+    /// scale ×, per-axis scale, rotation, position. Texture is excluded (paired automatically per model).
+    /// The user dials these in on a LIVE preview of the folder's first piece (P15), so what they see is
+    /// what the whole batch gets.</summary>
     internal struct MassImportSettings
     {
         public float ScaleMultiplier;  // × over each model's normalized size (1 = default size)
@@ -25,12 +26,24 @@ namespace CustomPartsMod
         public bool SideLeft;          // sided categories (feet/shoe, hands): whole folder goes to the left side
     }
 
+    /// <summary>Carries the pending folder batch through the live preview: the category/slot/side chosen
+    /// up front and the .obj files still to import once the user approves the previewed piece's values.</summary>
+    internal sealed class FolderImportContext
+    {
+        public string[] Category;
+        public RiggedAttachType Slot;
+        public string[] RemainingFiles; // every .obj except the previewed first piece
+        public bool SideLeft;
+        public int TotalCount;          // whole folder count (previewed piece + remaining)
+    }
+
     /// <summary>
-    /// P1 — drives the "Importar Pasta" button. First opens the conventions panel (MassImportConfig);
-    /// on confirm, picks a whole folder, silently imports every .obj in it into the currently open
-    /// category applying those conventions, pairs a same-named texture automatically, and persists
-    /// each one immediately (mirrors "Confirmar") so the whole batch survives a restart without a
-    /// per-item step. GLB is excluded because reload-on-restart (P0) doesn't support it yet.
+    /// P1/P15 — drives the "Importar Pasta" button. Picks the side (for sided categories) and the
+    /// folder, then imports the folder's FIRST .obj as a live preview and opens the normal scale panel
+    /// with an extra "Aplicar a toda a pasta" button. The values the user dials in there are applied to
+    /// every remaining .obj in one go (texture paired automatically per model), each persisted
+    /// immediately so the batch survives a restart. GLB is excluded (reload-on-restart doesn't support
+    /// it yet).
     /// </summary>
     internal static class MassImportFlow
     {
@@ -51,27 +64,32 @@ namespace CustomPartsMod
             }
 
             RiggedAttachType baseSlot = CategoryMap.ToSocket(category);
-            var kind = SidedCategory.KindOf(category); // feet/shoe or hands: the panel offers a left/right choice
+            var kind = SidedCategory.KindOf(category); // feet/shoe or hands: pick a left/right side once
 
-            // Open the conventions panel; the actual folder pick + import happens on confirm.
-            var canvas = creator.createNew != null ? creator.createNew.GetComponentInParent<Canvas>() : null;
-            Transform canvasT = canvas != null ? canvas.rootCanvas.transform : creator.transform;
-            GameObject buttonTemplate = creator.createNew != null ? creator.createNew.gameObject : null;
-            GameObject inputTemplate = creator.characterName != null ? creator.characterName.gameObject : null;
-
-            MassImportConfig.Open(buttonTemplate, inputTemplate, canvasT, category, settings =>
+            // Sided category: ask the side FIRST (the whole folder goes to it), then pick the folder and
+            // preview. Non-sided goes straight to the folder pick.
+            if (kind != SidedCategory.Kind.None)
             {
-                RiggedAttachType slot = baseSlot;
-                if (kind != SidedCategory.Kind.None)
+                var canvas = creator.createNew != null ? creator.createNew.GetComponentInParent<Canvas>() : null;
+                Transform canvasT = canvas != null ? canvas.rootCanvas.transform : creator.transform;
+                GameObject buttonTemplate = creator.createNew != null ? creator.createNew.gameObject : null;
+                string storeKey = SidedCategory.StoreKey(kind);
+                SidePrompt.Open(buttonTemplate, canvasT, kind, ScaleStore.GetLastSideLeft(storeKey), left =>
                 {
-                    ScaleStore.SetLastSideLeft(SidedCategory.StoreKey(kind), settings.SideLeft); // remember for next time
-                    slot = settings.SideLeft ? SidedCategory.LeftSlot(kind) : SidedCategory.RightSlot(kind);
-                }
-                RunImport(category, slot, settings).StartCoroutine();
-            });
+                    ScaleStore.SetLastSideLeft(storeKey, left);
+                    RiggedAttachType slot = left ? SidedCategory.LeftSlot(kind) : SidedCategory.RightSlot(kind);
+                    PickFolderAndPreview(category, slot, left).StartCoroutine();
+                });
+                return;
+            }
+
+            PickFolderAndPreview(category, baseSlot, false).StartCoroutine();
         }
 
-        private static IEnumerator RunImport(string[] category, RiggedAttachType slot, MassImportSettings settings)
+        /// <summary>Picks the folder, then imports its FIRST .obj live and opens the scale panel in
+        /// folder-preview mode. The rest of the folder waits in the <see cref="FolderImportContext"/> until
+        /// the user presses "Aplicar a toda a pasta".</summary>
+        private static IEnumerator PickFolderAndPreview(string[] category, RiggedAttachType slot, bool sideLeft)
         {
             yield return FileBrowser.WaitForLoadDialog(FileBrowser.PickMode.Folders, allowMultiSelection: false,
                 null, null, Loc.T("Selecionar pasta com .obj"), Loc.T("Importar pasta"));
@@ -82,7 +100,11 @@ namespace CustomPartsMod
             string[] files;
             try
             {
-                files = Directory.GetFiles(result[0], "*.obj", SearchOption.TopDirectoryOnly);
+                // Recursive: a folder of subfolders (each a garment) imports in one go. Each .obj still
+                // pairs with the textures in its OWN folder, and the whole tree goes to the open category
+                // with the chosen side — use "Importar Pasta (texturas compartilhadas)" for mixed-part
+                // trees that must auto-route to different categories.
+                files = Directory.GetFiles(result[0], "*.obj", SearchOption.AllDirectories);
             }
             catch (Exception e)
             {
@@ -95,25 +117,85 @@ namespace CustomPartsMod
                 Compat.ShowError("Nenhum .obj encontrado nessa pasta.");
                 yield break;
             }
-
-            int ok = 0, fail = 0;
-            foreach (var path in files)
+            if (files.Length > 1400)
             {
-                bool imported;
-                try { imported = ImportOne(path, category, slot, settings); }
-                catch (Exception e)
-                {
-                    imported = false;
-                    Plugin.Log.LogWarning("[mass-import] '" + path + "': " + e.Message);
-                }
-                if (imported) ok++; else fail++;
+                Compat.ShowError(string.Format("Muitos arquivos detectados ({0}). O limite máximo por importação é 1400 para evitar travamentos ou falta de memória. Certifique-se de não selecionar a pasta raiz (ex. CAS_Export) por engano.", files.Length));
+                yield break;
             }
 
-            var creator = UniqueMono<CharacterCreator>.instance;
-            if (ok > 0 && creator != null && creator.itemTabsLoader != null) creator.itemTabsLoader.Refresh();
+            // Import the first piece live so the user sizes/positions a REAL model before committing the
+            // whole folder to those values.
+            string first = files[0];
+            RPGMesh rpg = Compat.ImportMesh(Path.GetFileNameWithoutExtension(first), first, "obj");
+            if (rpg == null || rpg.mesh == null || rpg.mesh.vertexCount == 0)
+            {
+                Compat.ShowError("Nao consegui importar a primeira peca da pasta (use .obj validos).");
+                yield break;
+            }
 
-            if (ok > 0) Compat.ShowSuccess(Loc.T("Pasta importada:") + $" {ok} " + Loc.T(fail > 0 ? "parte(s), alguns com erro." : "parte(s)."));
-            else Compat.ShowError("Nenhum .obj da pasta pode ser importado.");
+            string[] rest = new string[files.Length - 1];
+            Array.Copy(files, 1, rest, 0, rest.Length);
+
+            var ctx = new FolderImportContext
+            {
+                Category = category,
+                Slot = slot,
+                RemainingFiles = rest,
+                SideLeft = sideLeft,
+                TotalCount = files.Length,
+            };
+
+            // Spawns the first part, opens the scale panel with the "Aplicar a toda a pasta" button.
+            ImportFlow.ImportLoadedMesh(rpg, category, slot, first, ctx);
+        }
+
+        /// <summary>Called by the scale panel's "Aplicar a toda a pasta" button: imports every remaining
+        /// .obj using the previewed piece's values. Runs across frames so a big folder doesn't freeze.</summary>
+        internal static void ImportRemaining(FolderImportContext ctx, MassImportSettings settings)
+        {
+            if (ctx == null) return;
+            RunRemaining(ctx, settings).StartCoroutine();
+        }
+
+        private static IEnumerator RunRemaining(FolderImportContext ctx, MassImportSettings settings)
+        {
+            string[] files = ctx.RemainingFiles ?? new string[0];
+            int ok = 0, fail = 0;
+            // Fix B — batch the disk writes: the whole folder rewrites scales.json ONCE (on Flush).
+            ScaleStore.BeginBatch();
+            try
+            {
+                for (int i = 0; i < files.Length; i++)
+                {
+                    string path = files[i];
+                    bool imported;
+                    try { imported = ImportOne(path, ctx.Category, ctx.Slot, settings); }
+                    catch (Exception e)
+                    {
+                        imported = false;
+                        Plugin.Log.LogWarning("[mass-import] '" + path + "': " + e.Message);
+                    }
+                    if (imported) ok++; else fail++;
+
+                    // Fix C — yield every few items so a big folder keeps the UI alive; progress -> log.
+                    if ((i & 7) == 7)
+                    {
+                        Plugin.Log.LogInfo($"[mass-import] {i + 1}/{files.Length}...");
+                        yield return null;
+                    }
+                }
+            }
+            finally
+            {
+                ScaleStore.Flush(); // single write of the whole batch, even if the loop threw
+            }
+
+            // Repaint the tab so the new parts show; IconButton generates each one's model icon on draw.
+            var creator = UniqueMono<CharacterCreator>.instance;
+            if (creator != null && creator.itemTabsLoader != null) creator.itemTabsLoader.Refresh();
+
+            int total = ok + 1; // + the previewed first piece (already imported + persisted)
+            Compat.ShowSuccess(Loc.T("Pasta importada:") + $" {total} " + Loc.T(fail > 0 ? "parte(s), alguns com erro." : "parte(s)."));
         }
 
         private static bool ImportOne(string modelPath, string[] category, RiggedAttachType slot, MassImportSettings settings)
@@ -130,18 +212,47 @@ namespace CustomPartsMod
             string id = ImportFlow.MakeId(sourceKey);
 
             // Every model in the batch follows the user's fixed conventions. Scale is normalized per
-            // mesh then multiplied, so differently-sized OBJs still land at a consistent world size.
+            // mesh then multiplied, so differently-sized OBJs still land at a consistent, visible size.
             float normalized = ImportFlow.NormalizeScale(mesh);
             float scale = normalized * settings.ScaleMultiplier;
 
-            // Pair a texture automatically: a sibling of the model (.mtl map_Kd or same-named PNG/JPG).
-            string texPath = TextureLoader.FindSibling(modelPath);
+            // Pair textures automatically: variant 0 is the same-named sibling (.mtl map_Kd or
+            // "<model>.png"), and the numbered siblings "<model>1.png", "<model>2.png", ... that the
+            // CAS Batch Exporter writes for the other colour swatches fill the "+" variant slots.
+            var variants = TextureLoader.FindVariants(modelPath);
+            string linkGroupId = PartNameRouter.ResolveLinkGroupId(fileName, new DirectoryInfo(Path.GetDirectoryName(modelPath)).Name);
+            string folderName = linkGroupId;
+            string destDir = Path.Combine(ScaleStore.CustomPartsDir, "models", folderName);
+            try
+            {
+                Directory.CreateDirectory(destDir);
+                string destObj = Path.Combine(destDir, Path.GetFileName(modelPath));
+                if (File.Exists(modelPath) && !string.Equals(Path.GetFullPath(modelPath), Path.GetFullPath(destObj), StringComparison.OrdinalIgnoreCase))
+                {
+                    File.Copy(modelPath, destObj, true);
+                }
+                modelPath = destObj;
+
+                for (int i = 0; i < variants.Count; i++)
+                {
+                    string origTex = variants[i];
+                    if (string.IsNullOrEmpty(origTex) || !File.Exists(origTex)) continue;
+                    string destTex = Path.Combine(destDir, Path.GetFileName(origTex));
+                    if (!string.Equals(Path.GetFullPath(origTex), Path.GetFullPath(destTex), StringComparison.OrdinalIgnoreCase))
+                    {
+                        File.Copy(origTex, destTex, true);
+                    }
+                    variants[i] = destTex;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogWarning($"[copy-self-contained-mass] Falha ao copiar arquivos para a pasta do mod: {ex.Message}");
+            }
+
+            string texPath = variants.Count > 0 ? variants[0] : null;
             Texture2D tex = TextureLoader.LoadFromFile(texPath);
             if (tex == null && rpg.texture != null && rpg.texture.width > 1) tex = rpg.texture;
-
-            // P13 — one variant to start (the auto-paired texture); the user can add more in the panel.
-            var variants = new System.Collections.Generic.List<string>();
-            if (tex != null && !string.IsNullOrEmpty(texPath)) variants.Add(texPath);
 
             var part = new CustomPart
             {
@@ -164,12 +275,16 @@ namespace CustomPartsMod
                 LocalEuler = settings.Euler,
                 GenderTag = settings.Gender ?? "",
                 AdditiveOverride = 0, // mass import uses the auto rule (eyes + accessory categories)
+                LinkGroupId = linkGroupId,
                 Additive = AccessoryMap.ResolveAdditive(category, 0), // P14
                 Tag = TagManager.ActiveTag, // P10 — batch gets the active tag
             };
 
             CustomPartCatalog.Register(part);
             Compat.AddTabInitializer(UniqueMono<CharacterCreator>.instance.itemTabsLoader, id);
+
+            // Portraits are NOT generated here — mass import stays fast. They fill in later from the real
+            // preview: when the user applies a part, or via the "Gerar miniaturas" auto-cycle button.
 
             // Persist right away (same record ScaleSession.Confirm would write) so the batch survives
             // a restart without the user opening each part's panel one by one.
@@ -189,6 +304,7 @@ namespace CustomPartsMod
                 slot = slot.ToString(),
                 additive = 0,
                 tag = part.Tag,
+                link = linkGroupId,
             });
 
             return true;

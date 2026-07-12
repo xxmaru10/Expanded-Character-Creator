@@ -36,17 +36,14 @@ namespace CustomPartsMod
             part.ThumbnailSprite = null; // rebuilt lazily from the new texture
             ThumbnailStore.Save(part.SourceKey, shot);
 
-            if (creator.itemTabsLoader != null) creator.itemTabsLoader.Refresh(); // repaint the button
+            // Repaint so the new portrait shows immediately.
+            if (creator.itemTabsLoader != null) creator.itemTabsLoader.Refresh();
         }
 
         /// <summary>Renders only the part, framed on its bounds, on a transparent background. Returns
         /// null (so the caller can fall back) if the camera or the part's renderers aren't available.</summary>
         private static Texture2D CaptureIsolated(CharacterCreator creator, CustomBodyPartAttachment attachment)
         {
-            var ccam = creator.creatorCam;
-            var cam = ccam != null ? ccam.cam : null;
-            if (cam == null) return null;
-
             var partRenderers = attachment.GetComponentsInChildren<Renderer>(true);
             if (partRenderers == null || partRenderers.Length == 0) return null;
 
@@ -59,7 +56,21 @@ namespace CustomPartsMod
             }
             if (!has) return null;
 
-            var partSet = new HashSet<Renderer>(partRenderers);
+            return RenderIsolated(creator, partRenderers, b);
+        }
+
+        /// <summary>Core isolated render: keeps only <paramref name="keep"/> visible (every other renderer
+        /// on the dummy + the backdrop is hidden), frames the creator camera on <paramref name="b"/>, and
+        /// renders to a transparent 512×512 texture. Restores camera + scene in a finally. Shared by the
+        /// on-apply capture and the background thumbnail generator (which passes a throwaway mesh object,
+        /// not a live attachment). Returns null if the creator camera isn't available.</summary>
+        internal static Texture2D RenderIsolated(CharacterCreator creator, Renderer[] keep, Bounds b)
+        {
+            var ccam = creator.creatorCam;
+            var cam = ccam != null ? ccam.cam : null;
+            if (cam == null || keep == null || keep.Length == 0) return null;
+
+            var partSet = new HashSet<Renderer>(keep);
             var toggledOff = new List<Renderer>();
 
             // Save camera + scene state.

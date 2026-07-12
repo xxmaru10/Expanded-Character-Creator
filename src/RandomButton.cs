@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using SlickUi;
 using UnityEngine;
 using UnityUtils;
@@ -6,16 +7,19 @@ using RpgEngine.Characters;
 namespace CustomPartsMod
 {
     /// <summary>
-    /// P15 — injects a single "Aleatório" text button (stacked with the import buttons) that opens the
-    /// <see cref="RandomPanel"/>. Cloned from an engine button like the others.
+    /// P15 — injects the randomize buttons, stacked BELOW "Resetar câmera" (so they no longer overlap
+    /// the import buttons). Both roll ONLY imported (custom) parts:
+    ///   • "Aleatório"    → opens the <see cref="RandomPanel"/> (per-category locks).
+    ///   • "Aleatorizar"  → a direct one-click roll (<see cref="Randomizer.Randomize"/>).
+    /// Cloned from an engine button like the others.
     /// </summary>
     internal static class RandomButton
     {
-        private static UiButton _button;
+        private static readonly List<UiButton> _buttons = new List<UiButton>();
 
         internal static void Ensure(CharacterCreator creator)
         {
-            if (_button != null) return;
+            if (_buttons.Count > 0) return;
 
             UiButton template = creator.createNew;
             if (template == null || template.transform == null)
@@ -24,30 +28,36 @@ namespace CustomPartsMod
                 return;
             }
 
-            _button = UiFactory.TextButton(
-                template.gameObject, template.transform.parent,
-                "Aleatório", _ => OnClick());
+            // Stacked below "Resetar câmera" (-188). One row = 34px. Both roll ONLY imported (custom)
+            // parts: "Aleatório" opens the lock panel, "Aleatorizar" is a direct one-click roll.
+            Make(template, "Aleatório", -224f, "RandomButton", OnOpenPanel);
+            Make(template, "Aleatorizar", -258f, "RandomCustomButton", Randomizer.Randomize);
 
-            if (_button == null)
+            Plugin.Log.LogInfo("Botoes de aleatorizar injetados no criador (P15).");
+        }
+
+        private static void Make(UiButton template, string label, float y, string name, System.Action onClick)
+        {
+            var btn = UiFactory.TextButton(template.gameObject, template.transform.parent, label, _ => onClick());
+            if (btn == null)
             {
-                Plugin.Log.LogWarning("Falha ao criar o botao Aleatório (clone sem UiButton).");
+                Plugin.Log.LogWarning("Falha ao criar o botao '" + label + "' (clone sem UiButton).");
                 return;
             }
-            _button.gameObject.name = "RandomButton";
+            btn.gameObject.name = name;
 
-            // Same size as the other import buttons, stacked below "Importar Pasta".
-            var rt = _button.GetComponent<RectTransform>();
+            var rt = btn.GetComponent<RectTransform>();
             if (rt != null)
             {
                 rt.sizeDelta = new Vector2(Mathf.Max(rt.sizeDelta.x, 170f), Mathf.Max(rt.sizeDelta.y, 34f));
-                rt.anchoredPosition += new Vector2(-230f, -116f);
+                rt.anchoredPosition += new Vector2(-230f, y);
             }
 
-            LocButtons.Register(_button, "Aleatório"); // keep it localized on runtime language change
-            Plugin.Log.LogInfo("Botao 'Aleatório' injetado no criador (P15).");
+            LocButtons.Register(btn, label); // keep it localized on runtime language change
+            _buttons.Add(btn);
         }
 
-        private static void OnClick()
+        private static void OnOpenPanel()
         {
             var creator = UniqueMono<CharacterCreator>.instance;
             if (creator == null) { Compat.ShowError("Criador indisponível."); return; }

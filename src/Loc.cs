@@ -39,6 +39,7 @@ namespace CustomPartsMod
             // --- injected buttons ---
             { "Importar Parte", "Import Part" },
             { "Importar Pasta", "Import Folder" },
+            { "Importar Pasta (texturas compartilhadas)", "Import Folder (shared textures)" },
             { "Aleatório", "Random" },
             { "Sapato (calçado)", "Shoe (footwear)" },
             { "Só custom: SIM", "Custom only: YES" },
@@ -48,7 +49,7 @@ namespace CustomPartsMod
             { "Importar pasta — convenções", "Import folder — conventions" },
             { "Aleatório (só peças custom)", "Random (custom parts only)" },
 
-            // --- ScaleSession / MassImportConfig labels & buttons ---
+            // --- ScaleSession labels & buttons ---
             { "arraste para mover", "drag to move" },
             { "Escala", "Scale" },
             { "Escala ×", "Scale ×" },
@@ -58,7 +59,15 @@ namespace CustomPartsMod
             { "Passo", "Step" },
             { "Salvar padrão", "Save as default" },
             { "Só desta vez", "Just this time" },
+
+            // --- tag editing (P10) in the edit panel ---
+            { "Tag", "Tag" },
+            { "Aplicar", "Apply" },
+            { "Sem tag", "No tag" },
+            { "Tag aplicada:", "Tag applied:" },
+            { "Tag removida.", "Tag removed." },
             { "Escolher pasta e importar", "Pick folder & import" },
+            { "Aplicar a toda a pasta", "Apply to whole folder" },
             { "Cancelar", "Cancel" },
 
             // --- SidePrompt / mass-import side toggle (feet & hands) ---
@@ -106,10 +115,13 @@ namespace CustomPartsMod
 
             // --- file-browser titles ---
             { "Selecionar pasta com .obj", "Select folder with .obj" },
+            { "Selecionar pasta (subpastas incluídas)", "Select folder (subfolders included)" },
             { "Importar pasta", "Import folder" },
 
             // --- success toasts ---
             { "Categoria Olhos. Importe um olho ou escolha um da lista.", "Eyes category. Import an eye or choose one from the list." },
+            { "Brincos. Escolha um brinco da lista.", "Earrings. Pick an earring from the list." },
+            { "Colares. Escolha um colar da lista.", "Necklaces. Pick a necklace from the list." },
             { "Categoria Sapato. Importe um sapato (escolha o lado) ou escolha um da lista.", "Shoe category. Import a shoe (pick the side) or choose one from the list." },
             { "Modelo removido.", "Model removed." },
             { "Parte importada:", "Part imported:" },
@@ -118,6 +130,7 @@ namespace CustomPartsMod
             { "Pasta importada:", "Folder imported:" },
             { "parte(s).", "part(s)." },
             { "parte(s), alguns com erro.", "part(s), some with errors." },
+            { "puladas", "skipped" },
 
             // --- error toasts ---
             { "Criador de personagens indisponivel.", "Character creator unavailable." },
