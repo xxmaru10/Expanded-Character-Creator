@@ -5,7 +5,7 @@ DOWNLOAD HERE: Last release here: https://github.com/xxmaru10/Expanded-Character
 
 ================================================================
  Custom Body Parts  -  a mod for The RPG Engine
- v0.1.2
+ v0.1.2.
 ================================================================
 
 The mod's in-game text follows the game's language automatically:
